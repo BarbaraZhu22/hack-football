@@ -6,7 +6,7 @@ This document is the single source of truth for scope, architecture, and contrib
 
 ## 1. Goals
 
-Football Desk is a web workspace for a football-themed experience with:
+Football Desk is a web workspace for a football-themed experience with
 
 - A persistent **shell** (logo, navigation, theme switch, agent chat).
 - Three **tabs**: Pitch (3D), Match (live desk data), Tactics (overlays and commands).
