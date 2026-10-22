@@ -1,0 +1,489 @@
+import { useMemo } from 'react'
+import * as THREE from 'three'
+
+function seeded(seed: number) {
+  let s = seed
+  return () => {
+    s = (s * 16807) % 2147483647
+    return (s - 1) / 2147483646
+  }
+}
+
+function makeGrassTexture() {
+  const W = 2048
+  const H = 3072
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  const rand = seeded(7829)
+  // Deep, slightly blue evening turf.
+  ctx.fillStyle = '#123d27'
+  ctx.fillRect(0, 0, W, H)
+  const stripe = H / 20
+  for (let i = 0; i < 20; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#16482d' : '#123f28'
+    ctx.fillRect(0, i * stripe, W, stripe)
+  }
+  // Grass grain: short, low-contrast strokes.
+  for (let i = 0; i < 46000; i++) {
+    const x = rand() * W
+    const y = rand() * H
+    const a = 0.025 + rand() * 0.075
+    ctx.strokeStyle = rand() > 0.5 ? `rgba(122,190,120,${a})` : `rgba(5,35,20,${a})`
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(x + rand() * 2 - 1, y - 2 - rand() * 4)
+    ctx.stroke()
+  }
+  // Broad mowing/weather bands.
+  ctx.globalCompositeOperation = 'multiply'
+  for (let i = 0; i < 9; i++) {
+    const x = rand() * W
+    const y = rand() * H
+    const r = 100 + rand() * 300
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, r)
+    grd.addColorStop(0, 'rgba(23,55,35,0.18)')
+    grd.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = grd
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalCompositeOperation = 'source-over'
+
+  // Pitch markings, drawn in metres then converted.
+  const ppmX = W / 68
+  const ppmZ = H / 105
+  const mx = (x: number) => (x / 68) * W
+  const mz = (z: number) => ((z + 52.5) / 105) * H
+  ctx.strokeStyle = 'rgba(248,250,242,0.92)'
+  ctx.fillStyle = 'rgba(248,250,242,0.92)'
+  ctx.lineWidth = Math.max(3, 0.12 * ppmX)
+  ctx.lineCap = 'round'
+  const box = (x: number, z: number, w: number, d: number) =>
+    ctx.strokeRect(mx(x), mz(z), w * ppmX, d * ppmZ)
+  // touchlines and goal lines
+  ctx.strokeRect(mx(0.14), mz(-52.36), 67.72 * ppmX, 104.72 * ppmZ)
+  // halfway
+  ctx.beginPath()
+  ctx.moveTo(mx(0.14), mz(0))
+  ctx.lineTo(mx(67.86), mz(0))
+  ctx.stroke()
+  // centre circle and spot
+  ctx.beginPath()
+  ctx.ellipse(mx(34), mz(0), 9.15 * ppmX, 9.15 * ppmZ, 0, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(mx(34), mz(0), 0.18 * ppmX, 0, Math.PI * 2)
+  ctx.fill()
+  // both ends
+  for (const dir of [-1, 1]) {
+    const goalZ = dir === -1 ? -52.5 : 52.5
+    const sixteenZ = dir === -1 ? -52.5 : 35.0
+    const sixZ = dir === -1 ? -52.5 : 47.0
+    box(13.84, sixteenZ, 40.32, 16.5)
+    box(24.84, sixZ, 18.32, 5.5)
+    // penalty spot
+    const spotZ = goalZ - dir * 11
+    ctx.beginPath()
+    ctx.arc(mx(34), mz(spotZ), 0.17 * ppmX, 0, Math.PI * 2)
+    ctx.fill()
+    // penalty arc clipped visually by drawing only outside the box
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, W, H)
+    if (dir === 1) ctx.rect(mx(13.84), mz(46.5), 40.32 * ppmX, 6.5 * ppmZ)
+    else ctx.rect(mx(13.84), 0, 40.32 * ppmX, mz(-46.5))
+    ctx.clip('evenodd')
+    ctx.beginPath()
+    ctx.ellipse(mx(34), mz(spotZ), 9.15 * ppmX, 9.15 * ppmZ, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.restore()
+    // goal itself
+    ctx.save()
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'
+    ctx.lineWidth = Math.max(2, 0.1 * ppmX)
+    ctx.strokeRect(mx(30.34), mz(goalZ - dir * 0.1), 7.32 * ppmX, dir * 2 * ppmZ)
+    ctx.restore()
+  }
+  // corner arcs
+  for (const [x, z, a] of [
+    [0, -52.5, 0],
+    [68, -52.5, Math.PI / 2],
+    [68, 52.5, Math.PI],
+    [0, 52.5, -Math.PI / 2],
+  ]) {
+    ctx.beginPath()
+    ctx.arc(mx(x), mz(z), 1 * ppmX, a, a + Math.PI / 2)
+    ctx.stroke()
+  }
+  // wear near the technical areas and incident zone
+  ctx.globalCompositeOperation = 'multiply'
+  for (const [x, z, r] of [
+    [27.5, 9.7, 3.2],
+    [4, 0, 2.6],
+    [34, -40, 3.6],
+  ]) {
+    const g = ctx.createRadialGradient(mx(x), mz(z), 0, mx(x), mz(z), r * ppmX)
+    g.addColorStop(0, 'rgba(112,92,55,0.34)')
+    g.addColorStop(0.55, 'rgba(150,126,80,0.15)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(mx(x), mz(z), r * ppmX, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalCompositeOperation = 'source-over'
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 8
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping
+  return tex
+}
+
+function makeGrassNormal() {
+  const N = 256
+  const c = document.createElement('canvas')
+  c.width = c.height = N
+  const ctx = c.getContext('2d')!
+  const rand = seeded(119)
+  ctx.fillStyle = 'rgb(128,128,255)'
+  ctx.fillRect(0, 0, N, N)
+  for (let i = 0; i < 9000; i++) {
+    const x = rand() * N
+    const y = rand() * N
+    const v = 118 + Math.floor(rand() * 20)
+    ctx.fillStyle = `rgba(${v},${v},255,0.42)`
+    ctx.fillRect(x, y, 1, 1 + rand() * 2)
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.repeat.set(90, 140)
+  tex.anisotropy = 4
+  return tex
+}
+
+export function makeCrowdTexture() {
+  const W = 2048
+  const H = 512
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  const rand = seeded(612)
+  ctx.fillStyle = '#172326'
+  ctx.fillRect(0, 0, W, H)
+  // concourse aisles
+  for (let i = 0; i < 9; i++) {
+    ctx.fillStyle = '#141f24'
+    ctx.fillRect((i / 9) * W, 0, 18, H)
+  }
+  const palette = ['#d9e4ea', '#2b4a66', '#8a1d26', '#e0c25e', '#4a5d61', '#102432', '#a6bfcb']
+  for (let row = 0; row < 36; row++) {
+    const y = 8 + row * 14
+    for (let i = 0; i < 330; i++) {
+      const x = rand() * W
+      ctx.fillStyle = palette[Math.floor(rand() * palette.length)]
+      ctx.globalAlpha = 0.45 + rand() * 0.55
+      ctx.fillRect(x, y + rand() * 4, 3 + rand() * 3, 3 + rand() * 4)
+    }
+  }
+  ctx.globalAlpha = 1
+  const grd = ctx.createLinearGradient(0, 0, 0, H)
+  grd.addColorStop(0, 'rgba(5,12,16,0.6)')
+  grd.addColorStop(0.5, 'rgba(5,12,16,0.04)')
+  grd.addColorStop(1, 'rgba(5,12,16,0.72)')
+  ctx.fillStyle = grd
+  ctx.fillRect(0, 0, W, H)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.wrapS = THREE.RepeatWrapping
+  tex.repeat.set(2.4, 1)
+  tex.anisotropy = 4
+  return tex
+}
+
+function makeAdTexture() {
+  const W = 2048
+  const H = 160
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  const boards = [
+    ['#092430', '#bfe4ee', 'PREMIER LEAGUE'],
+    ['#13272c', '#dce9df', 'ETIHAD'],
+    ['#0b1e21', '#8fdac0', 'MATCH REVIEW'],
+    ['#65171c', '#f1e8d6', 'NO ROOM FOR RACISM'],
+    ['#0d2020', '#b9d6c7', 'SKELE·TRACK'],
+  ]
+  const w = W / boards.length
+  boards.forEach(([bg, fg, text], i) => {
+    ctx.fillStyle = bg
+    ctx.fillRect(i * w, 0, w + 2, H)
+    ctx.fillStyle = fg
+    ctx.font = '700 58px Inter, Helvetica, Arial, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, i * w + w / 2, H / 2 + 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'
+    ctx.fillRect(i * w, 0, 2, H)
+  })
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.wrapS = THREE.ClampToEdgeWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.anisotropy = 8
+  return tex
+}
+
+
+function makeRibbonTexture() {
+  const W = 2048
+  const H = 96
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#071615'
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = '#9af0d2'
+  ctx.font = '600 38px IBM Plex Mono, monospace'
+  ctx.textBaseline = 'middle'
+  for (let i = 0; i < 5; i++) {
+    ctx.globalAlpha = 0.72
+    ctx.fillText(i % 2 === 0 ? 'PREMIER LEAGUE  ·  MATCH REVIEW' : 'MCI 2 — 1 ARS  ·  78:42', 24 + i * 420, H / 2)
+  }
+  ctx.globalAlpha = 1
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.wrapS = THREE.RepeatWrapping
+  tex.repeat.set(1.5, 1)
+  return tex
+}
+
+function makeScreenTexture() {
+  const W = 1024
+  const H = 512
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  const g = ctx.createLinearGradient(0, 0, W, H)
+  g.addColorStop(0, '#071917')
+  g.addColorStop(1, '#0c2523')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = 'rgba(169,241,215,.18)'
+  ctx.lineWidth = 3
+  ctx.strokeRect(18, 18, W - 36, H - 36)
+  ctx.fillStyle = '#95b9ab'
+  ctx.font = '500 28px IBM Plex Mono, monospace'
+  ctx.fillText('PREMIER LEAGUE · MATCH CENTRE', 50, 76)
+  ctx.fillStyle = '#e8f5ee'
+  ctx.font = '700 94px Inter, Helvetica, Arial, sans-serif'
+  ctx.fillText('MCI', 60, 226)
+  ctx.fillStyle = '#a7f4d4'
+  ctx.fillText('2 : 1', 300, 226)
+  ctx.fillStyle = '#ff7f73'
+  ctx.fillText('ARS', 610, 226)
+  ctx.fillStyle = '#96a9a0'
+  ctx.font = '500 28px IBM Plex Mono, monospace'
+  ctx.fillText('78:42  ·  SECOND HALF  ·  VAR CHECK', 62, 306)
+  ctx.fillStyle = 'rgba(183,244,212,.12)'
+  ctx.fillRect(50, 352, W - 100, 2)
+  ctx.fillStyle = '#d7e8de'
+  ctx.font = '500 25px IBM Plex Mono, monospace'
+  ctx.fillText('INCIDENT REVIEW  ·  SERIOUS FOUL PLAY', 62, 410)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function Goal({ z, dir }: { z: number; dir: number }) {
+  const posts = useMemo(() => {
+    const x0 = 34 - 3.66
+    const x1 = 34 + 3.66
+    const h = 2.44
+    return { x0, x1, h }
+  }, [])
+  const mat = new THREE.MeshStandardMaterial({ color: '#edf7f1', roughness: 0.4, metalness: 0.25 })
+  return (
+    <group position={[0, 0, z]}>
+      {[posts.x0, posts.x1].map((x) => (
+        <mesh key={x} position={[x, posts.h / 2, 0]} material={mat} castShadow>
+          <cylinderGeometry args={[0.06, 0.06, posts.h, 10]} />
+        </mesh>
+      ))}
+      <mesh position={[34, posts.h, 0]} rotation={[0, 0, Math.PI / 2]} material={mat} castShadow>
+        <cylinderGeometry args={[0.06, 0.06, 7.32, 10]} />
+      </mesh>
+      {/* net suggestion */}
+      <mesh position={[34, 1.22, -dir * 0.9]} rotation={[0, 0, 0]}>
+        <planeGeometry args={[7.2, 2.3]} />
+        <meshBasicMaterial color="#9eb9b2" transparent opacity={0.14} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
+export function Pitch() {
+  const grass = useMemo(makeGrassTexture, [])
+  const normal = useMemo(makeGrassNormal, [])
+  const crowd = useMemo(makeCrowdTexture, [])
+  const ads = useMemo(makeAdTexture, [])
+  const ribbon = useMemo(makeRibbonTexture, [])
+  const screenTex = useMemo(makeScreenTexture, [])
+
+  return (
+    <group>
+      {/* pitch */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[68, 105]} />
+        <meshStandardMaterial
+          map={grass}
+          normalMap={normal}
+          normalScale={new THREE.Vector2(0.42, 0.42)}
+          roughness={0.93}
+          metalness={0.0}
+          color="#d6e9d9"
+        />
+      </mesh>
+      {/* darker surround / technical area */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
+        <planeGeometry args={[92, 130]} />
+        <meshStandardMaterial color="#0b241a" roughness={1} />
+      </mesh>
+
+      <Goal z={-52.3} dir={-1} />
+      <Goal z={52.3} dir={1} />
+
+      {/* advertising boards, touchline side (the camera looks this way) */}
+      <mesh position={[42.0, 0.42, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.18, 0.84, 66]} />
+        <meshStandardMaterial color="#10181b" roughness={0.55} metalness={0.2} />
+      </mesh>
+      <mesh position={[41.88, 0.44, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[66, 0.78]} />
+        <meshBasicMaterial map={ads} toneMapped={false} />
+      </mesh>
+      <mesh position={[-42.0, 0.42, 0]} rotation={[0, Math.PI, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.18, 0.84, 66]} />
+        <meshStandardMaterial color="#10181b" roughness={0.55} metalness={0.2} />
+      </mesh>
+
+      {/* lead-in / run-off strips */}
+      {[38.6, -38.6].map((x) => (
+        <mesh key={x} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.005, 0]} receiveShadow>
+          <planeGeometry args={[4.2, 72]} />
+          <meshStandardMaterial color="#0d3022" roughness={1} />
+        </mesh>
+      ))}
+
+      {/* Main stand behind the far touchline */}
+      <group position={[51, 0, 0]}>
+        <mesh position={[0, 2.1, 0]} receiveShadow castShadow>
+          <boxGeometry args={[9, 4.2, 76]} />
+          <meshStandardMaterial color="#101c22" roughness={0.92} />
+        </mesh>
+        <mesh position={[0, 10.2, 0]} rotation={[0, -Math.PI / 2, -0.12]} receiveShadow>
+          <planeGeometry args={[74, 15]} />
+          <meshStandardMaterial map={crowd} roughness={1} color="#9fb0b4" />
+        </mesh>
+        <mesh position={[0, 10.2, 0]} rotation={[0, -Math.PI / 2, -0.12]}>
+          <planeGeometry args={[74, 15]} />
+          <meshBasicMaterial map={crowd} transparent opacity={0.54} toneMapped={false} />
+        </mesh>
+        {/* roof */}
+        <mesh position={[2.3, 18.4, 0]} rotation={[0, 0, 0.06]} castShadow>
+          <boxGeometry args={[15, 0.5, 78]} />
+          <meshStandardMaterial color="#0b1115" roughness={0.7} metalness={0.35} />
+        </mesh>
+        {Array.from({ length: 9 }).map((_, i) => (
+          <mesh key={i} position={[1, 17.4, -32 + i * 8]} rotation={[0, 0, 0.1]}>
+            <boxGeometry args={[12.5, 0.15, 0.16]} />
+            <meshStandardMaterial color="#29363d" metalness={0.7} roughness={0.4} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* lower tier above the advertising boards, gives the broadcast shot a crowd line */}
+      <mesh position={[42.6, 3.6, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
+        <planeGeometry args={[76, 6.0]} />
+        <meshBasicMaterial map={crowd} color="#e2eeea" />
+      </mesh>
+      <mesh position={[43.1, 7.2, 0]} rotation={[0, -Math.PI / 2, -0.05]} receiveShadow>
+        <planeGeometry args={[78, 7.5]} />
+        <meshBasicMaterial map={crowd} color="#c6d5d0" />
+      </mesh>
+      {/* LED ribbon and stadium screen */}
+      <mesh position={[42.55, 1.45, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[72, 0.34]} />
+        <meshBasicMaterial map={ribbon} toneMapped={false} />
+      </mesh>
+      <mesh position={[46.5, 1.65, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[78, 0.6]} />
+        <meshBasicMaterial color="#050d10" />
+      </mesh>
+      <group position={[47.2, 5.1, 10]} rotation={[0, -Math.PI / 2, 0]}>
+        <mesh>
+          <planeGeometry args={[7.2, 3.6]} />
+          <meshBasicMaterial map={screenTex} toneMapped={false} />
+        </mesh>
+        <mesh position={[0, 0, -0.04]}>
+          <planeGeometry args={[7.7, 4.0]} />
+          <meshBasicMaterial color="#03090b" />
+        </mesh>
+      </group>
+
+      {/* far side stand, darker and lower for parallax */}
+      <group position={[-44, 0, 0]}>
+        <mesh position={[0, 6.2, 0]} rotation={[0, Math.PI / 2, -0.1]} receiveShadow>
+          <planeGeometry args={[92, 13]} />
+          <meshStandardMaterial map={crowd} color="#3e4d53" roughness={1} />
+        </mesh>
+        <mesh position={[-2, 12.5, 0]} castShadow>
+          <boxGeometry args={[9, 0.4, 82]} />
+          <meshStandardMaterial color="#0b1115" roughness={0.7} metalness={0.35} />
+        </mesh>
+      </group>
+
+      {/* end stands */}
+      {[-61, 61].map((z) => (
+        <group key={z} position={[0, 0, z]}>
+          <mesh position={[0, 5.2, 0]} rotation={[0, 0, -0.08]} receiveShadow>
+            <planeGeometry args={[64, 11]} />
+            <meshStandardMaterial map={crowd} color="#344349" roughness={1} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* floodlight masts */}
+      {[
+        [44, 22, -35],
+        [44, 22, 35],
+        [-40, 20, -38],
+        [-40, 20, 38],
+      ].map(([x, y, z], i) => (
+        <group key={i} position={[x, y, z]}>
+          <mesh position={[0, y / 2, 0]}>
+            <cylinderGeometry args={[0.16, 0.24, y, 8]} />
+            <meshStandardMaterial color="#1d2a30" metalness={0.7} roughness={0.45} />
+          </mesh>
+          <mesh position={[0, y / 2 + 1.2, 0]}>
+            <boxGeometry args={[4.6, 1.5, 0.4]} />
+            <meshStandardMaterial color="#102027" metalness={0.6} roughness={0.4} />
+          </mesh>
+          {[-1.4, 0, 1.4].map((dx) => (
+            <mesh key={dx} position={[dx, y / 2 + 1.2, 0.22]}>
+              <planeGeometry args={[0.75, 1.05]} />
+              <meshBasicMaterial color="#fff6db" toneMapped={false} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+    </group>
+  )
+}
