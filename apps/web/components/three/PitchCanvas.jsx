@@ -1,90 +1,101 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
-import { Line, OrbitControls } from "@react-three/drei";
-
+import { useEffect, useRef, useState } from "react";
+import { Scan } from "lucide-react";
+import styles from "./ViewportChrome.module.css";
+import { Scene } from "@/components/three/Scene";
+import ViewportChrome from "@/components/three/ViewportChrome";
 import { useScene } from "@/lib/scene/SceneProvider";
 
-function PitchField() {
+export default function PitchCanvas({ sim, timeRef, onFreeze, viewportParts }) {
+  const { state, run } = useScene();
+  const previousLoaderSetting = useRef(viewportParts.loading);
+  const [loaded, setLoaded] = useState(false);
+  const [loaderHidden, setLoaderHidden] = useState(false);
+  const [loaderFading, setLoaderFading] = useState(false);
+  const [progress, setProgress] = useState(6);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setProgress((value) => value < 88 ? Math.min(88, value + Math.random() * 9) : value);
+    }, 260);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return undefined;
+    setProgress(100);
+    setLoaderFading(true);
+    const timer = window.setTimeout(() => setLoaderHidden(true), 450);
+    return () => window.clearTimeout(timer);
+  }, [loaded]);
+
+  useEffect(() => {
+    if (viewportParts.loading && !previousLoaderSetting.current) {
+      setLoaderHidden(false);
+      setLoaderFading(false);
+    } else if (!viewportParts.loading) {
+      setLoaderHidden(true);
+    }
+    previousLoaderSetting.current = viewportParts.loading;
+  }, [loaded, viewportParts.loading]);
+
+  const onReady = () => setLoaded(true);
+
   return (
-    <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[40, 26]} />
-        <meshStandardMaterial color="#2d6a3e" />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-        <planeGeometry args={[38, 24]} />
-        <meshStandardMaterial color="#3f8f55" />
-      </mesh>
-    </>
-  );
-}
-
-function SceneContent() {
-  const { state } = useScene();
-  const { camera, players, ball, arrows, highlight } = state;
-
-  return (
-    <>
-      <color attach="background" args={["#0b1410"]} />
-      <ambientLight intensity={0.65} />
-      <directionalLight position={[10, 20, 8]} intensity={1.1} />
-      <PitchField />
-
-      {players.map((player) => {
-        const isHighlighted =
-          highlight?.target === "player" && highlight.id === player.id;
-        const color = player.team === "away" ? "#60a5fa" : "#f472b6";
-        return (
-          <mesh
-            key={player.id}
-            position={player.position}
-            scale={isHighlighted ? 1.35 : 1}
-          >
-            <sphereGeometry args={[0.45, 24, 24]} />
-            <meshStandardMaterial color={isHighlighted ? "#fef08a" : color} />
-          </mesh>
-        );
-      })}
-
-      <mesh position={ball.position}>
-        <sphereGeometry args={[0.25, 24, 24]} />
-        <meshStandardMaterial color="#f8fafc" />
-      </mesh>
-
-      {arrows.map((arrow) => (
-        <Line
-          key={arrow.id}
-          points={[arrow.from, arrow.to]}
-          color="#fef08a"
-          lineWidth={2}
+    <div className={styles.stageFrame}>
+      <div className={styles.sceneLayer}>
+        <Scene
+          sim={sim}
+          timeRef={timeRef}
+          cameraPreset={state.camera.preset}
+          showSkeleton={state.overlays.skeleton}
+          showLabels={state.overlays.labels}
+          showTrajectory={state.overlays.trajectory}
+          showForces={state.overlays.forces}
+          dual={false}
+          onReady={onReady}
         />
-      ))}
-
-      <OrbitControls
-        target={camera.lookAt}
-        enablePan
-        maxPolarAngle={Math.PI / 2.1}
-      />
-    </>
-  );
-}
-
-export default function PitchCanvas() {
-  const { state } = useScene();
-
-  return (
-    <div className="h-full min-h-[320px] w-full overflow-hidden rounded-xl border bg-card">
-      <Canvas
-        camera={{
-          position: state.camera.position,
-          fov: 45,
-          near: 0.1,
-          far: 200,
+      </div>
+      <ViewportChrome
+        sim={sim}
+        time={state.incident.time}
+        cameraPreset={state.camera.preset}
+        onCamera={(preset) => {
+          const option = {
+            broadcast: [40, 11, 24],
+            touchline: [34, 5, 22],
+            tactical: [27, 34, 10],
+            referee: [31, 4, 4],
+            free: [40, 11, 24],
+          }[preset];
+          run([{ type: "camera.set", preset, position: option, lookAt: [27, 0, 10] }]);
         }}
-      >
-        <SceneContent />
-      </Canvas>
+        overlays={state.overlays}
+        onOverlay={(key) => run([{ type: "pitch.overlay.set", key, enabled: !state.overlays[key] }])}
+        onFreeze={onFreeze}
+        parts={viewportParts}
+      />
+      {viewportParts.loading && !loaderHidden && (
+        <div className={`${styles.stageLoader} ${loaderFading ? styles.stageLoaderDone : ""}`}>
+          <div className={styles.loadInner}>
+            <div className={styles.loadEmblem}>
+              <div className={`${styles.ring} ${styles.ringOne}`} />
+              <div className={`${styles.ring} ${styles.ringTwo}`} />
+              <div className={`${styles.ring} ${styles.ringThree}`} />
+              <Scan size={24} />
+            </div>
+            <span className={styles.eyebrow}>ARBITER RECONSTRUCTION ENGINE</span>
+            <h2>Building the incident twin</h2>
+            <p>Loading rig · calibrating pitch · solving contact</p>
+            <div className={styles.loadBar}><span style={{ width: `${progress}%` }} /></div>
+            <div className={styles.loadRow}>
+              <span>{progress < 100 ? "ASSEMBLING SCENE" : "READY"}</span>
+              <b>{Math.min(100, Math.round(progress))}%</b>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,12 +8,14 @@
     "actions": []
   },
   "sceneActions": [
-    { "type": "camera.set", "position": [0, 0, 0], "lookAt": [0, 0, 0] },
+    { "type": "camera.set", "preset": "broadcast|touchline|tactical|referee|free", "position": [0, 0, 0], "lookAt": [0, 0, 0] },
     { "type": "players.set", "players": [{ "id": "string", "team": "home|away", "position": [0, 0, 0] }] },
     { "type": "ball.set", "position": [0, 0, 0] },
     { "type": "arrow.add", "id": "string", "from": [0, 0, 0], "to": [0, 0, 0] },
     { "type": "arrow.clear" },
     { "type": "highlight", "target": "player|zone", "id": "string" },
+    { "type": "incident.seek", "time": 0 },
+    { "type": "pitch.overlay.set", "key": "skeleton|labels|trajectory|forces|dual", "enabled": true },
     { "type": "reset" }
   ]
 }
