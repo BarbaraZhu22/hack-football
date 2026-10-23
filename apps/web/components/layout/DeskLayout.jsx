@@ -19,9 +19,9 @@ import {
 import { cn } from "@/lib/utils";
 
 const tabs = [
-  { href: "/pitch", label: "Pitch" },
-  { href: "/match", label: "Match" },
-  { href: "/tactics", label: "Tactics" },
+  { href: "/overview", label: "Overview" },
+  { href: "/pitch", label: "Incident" },
+  { href: "/tactics", label: "Analysis" },
 ];
 
 export default function DeskLayout({ children }) {
@@ -30,14 +30,14 @@ export default function DeskLayout({ children }) {
   const activeTheme = themes.find((item) => item.id === theme);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="flex min-h-dvh flex-col bg-background lg:h-dvh lg:overflow-hidden">
       <header className="border-b bg-card/80 backdrop-blur">
         <div className="flex h-14 w-full items-center gap-4 px-3">
-          <Link href="/pitch" className="flex items-center gap-2 font-semibold">
+          <Link href="/overview" className="flex items-center gap-2 font-semibold">
             <span className="inline-flex size-8 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">
-              FD
+              FI
             </span>
-            <span className="hidden sm:inline">Football Desk</span>
+            <span className="hidden sm:inline">Football Interpreter</span>
           </Link>
 
           <nav className="flex flex-1 items-center gap-1">
@@ -78,7 +78,7 @@ export default function DeskLayout({ children }) {
         </div>
       </header>
 
-      <div className="grid w-full flex-1 gap-4 px-3 py-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid min-h-0 w-full flex-1 gap-4 px-3 py-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <main className="min-h-0">{children}</main>
 
         <aside className="hidden min-h-0 lg:block">

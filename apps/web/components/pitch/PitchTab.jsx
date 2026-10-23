@@ -1,10 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useLoader } from "@react-three/fiber";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   Axis3D,
   Camera,
+  ChevronDown,
   Move3D,
   Pause,
   Play,
@@ -13,10 +17,19 @@ import {
   Target,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MATCH } from "@/lib/incident";
+import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { ContactEnvelope } from "@/components/three/ViewportChrome";
@@ -35,6 +48,93 @@ const ContactCameraScene = dynamic(() => import("@/components/three/Scene").then
   ssr: false,
   loading: () => <div className="grid h-full place-items-center text-xs text-muted-foreground">Loading contact camera…</div>,
 });
+
+// Self-healing wrapper for the two WebGL viewports. A long dev session can
+// leave a dynamic import pointing at a stale chunk or an aborted asset fetch,
+// which surfaces as a permanently blank viewport. The boundary catches hard
+// errors, the watchdog remounts a viewport that never produced a live canvas,
+// and both retry a limited number of times before surfacing a message.
+const SCENE_READY_TIMEOUT_MS = 4000;
+const SCENE_MAX_RETRIES = 3;
+
+// Assets consumed by the actor rigs inside the 3D viewports.
+const HERO_MODEL_URL = "/models/quaternius/Superhero_Male_FullBody.gltf";
+const RUN_CLIP_URL = "/models/mixamo/Standard_Run.glb";
+
+// Populates the shared suspense cache for the two gltf assets. Effects in
+// this component only run once the loads have resolved, so onReady fires
+// exactly when the cache is warm.
+function AssetWarmup({ onReady }) {
+  useLoader(GLTFLoader, HERO_MODEL_URL);
+  useLoader(GLTFLoader, RUN_CLIP_URL);
+  useEffect(() => {
+    onReady();
+  }, [onReady]);
+  return null;
+}
+
+class SceneErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { crashed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { crashed: true };
+  }
+
+  componentDidCatch(error) {
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn("Viewport boundary caught an error:", error);
+    }
+    if (this.props.onCrash) this.props.onCrash();
+  }
+
+  render() {
+    if (this.state.crashed) return this.props.fallback ?? null;
+    return this.props.children;
+  }
+}
+
+function SceneSlot({ label, children }) {
+  const [attempt, setAttempt] = useState(0);
+  const hostRef = useRef(null);
+  const exhausted = attempt >= SCENE_MAX_RETRIES;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const host = hostRef.current;
+      const canvas = host ? host.querySelector("canvas") : null;
+      const live = canvas && canvas.width > 0 && canvas.height > 0;
+      if (!exhausted && !live) {
+        setAttempt((value) => value + 1);
+      }
+    }, SCENE_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [attempt, exhausted]);
+
+  const retry = useCallback(() => {
+    if (!exhausted) {
+      window.setTimeout(() => setAttempt((value) => value + 1), 400);
+    }
+  }, [exhausted]);
+
+  return (
+    <div ref={hostRef} className="h-full">
+      <SceneErrorBoundary
+        key={attempt}
+        onCrash={retry}
+        fallback={
+          <div className="grid h-full place-items-center rounded-lg border bg-muted/30 p-4 text-center text-xs text-muted-foreground">
+            {label} could not start.{exhausted ? " Reload the page to retry." : " Retrying…"}
+          </div>
+        }
+      >
+        {children}
+      </SceneErrorBoundary>
+    </div>
+  );
+}
 
 const CAMERA_OPTIONS = [
   { id: "broadcast", label: "Broadcast", icon: Camera, position: [40, 11, 24] },
@@ -76,7 +176,11 @@ export default function PitchTab() {
   const { state, run } = useScene();
   const simulation = useMemo(buildSimulation, []);
   const [playing, setPlaying] = useState(false);
-  const [rate, setRate] = useState(1);
+  const [rate, setRate] = useState(0.5);
+  const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
+  const searchParams = useSearchParams();
+  const incident = INCIDENTS.find((item) => item.id === incidentId) ?? INCIDENTS[0];
+  const incidentActive = incident.status === "active";
   const timeRef = useRef(state.incident.time);
   const time = state.incident.time;
   const activeEvent = simulation.events.reduce(
@@ -158,6 +262,71 @@ export default function PitchTab() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [seek, setCamera, state.incident.contactTime, toggleOverlay]);
 
+  // Deep link support: /pitch?incident=offside preselects that incident when
+  // arriving from an overview event point.
+  useEffect(() => {
+    const param = searchParams.get("incident");
+    if (param && INCIDENTS.some((item) => item.id === param)) {
+      setIncidentId(param);
+    }
+  }, [searchParams]);
+
+  // Mount the WebGL viewports only after the page shell has settled and the
+  // gltf assets are warm in the shared loader cache. Mounting the viewports
+  // while the assets are still cold - which is what a direct load or refresh
+  // does - leaves the actor rigs in a broken state. Warming the cache first
+  // routes every entry point through the same reliable path that switching
+  // incidents already uses.
+  const [shellReady, setShellReady] = useState(false);
+  const [assetsReady, setAssetsReady] = useState(false);
+  const handleAssetsReady = useCallback(() => setAssetsReady(true), []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShellReady(true), 300);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // The contact camera mounts shortly after the main viewport instead of in
+  // the same commit. Creating both WebGL contexts simultaneously is flaky at
+  // load time (one of the two silently fails); staggering them reproduces the
+  // reliable sequential path that users observe when switching incidents.
+  const viewportLive = incidentActive && shellReady && assetsReady;
+  const [contactMounted, setContactMounted] = useState(false);
+  useEffect(() => {
+    if (!viewportLive) {
+      setContactMounted(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setContactMounted(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [viewportLive]);
+
+  const incidentSwitcher = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="min-w-0 gap-2">
+          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS[incident.rating].color }} />
+          <span className="truncate">{incident.label}</span>
+          <ChevronDown className="size-4 shrink-0 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuLabel>Controversial decisions</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={incidentId} onValueChange={setIncidentId}>
+          {INCIDENTS.map((item) => (
+            <DropdownMenuRadioItem key={item.id} value={item.id} className="gap-2">
+              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS[item.rating].color }} />
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {item.status === "active" ? null : (
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Soon</span>
+              )}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   function playIncident() {
     seek(0.15);
     setCamera("broadcast");
@@ -174,7 +343,7 @@ export default function PitchTab() {
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge>3D incident review</Badge>
+          {incidentSwitcher}
           <span className="truncate text-xs uppercase tracking-[0.12em] text-muted-foreground">{MATCH.competition} · {MATCH.round}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -186,9 +355,21 @@ export default function PitchTab() {
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_255px]">
+        {incidentActive ? (
+          <SceneErrorBoundary onCrash={handleAssetsReady} fallback={null}>
+            <Suspense fallback={null}>
+              <AssetWarmup onReady={handleAssetsReady} />
+            </Suspense>
+          </SceneErrorBoundary>
+        ) : null}
+
         <div className="flex min-h-0 flex-col gap-3">
           <Card className="relative aspect-[2/1] min-h-[340px] shrink-0 overflow-hidden border-0 bg-transparent p-0 shadow-none">
-            <PitchCanvas sim={simulation} timeRef={timeRef} onFreeze={freezeContact} viewportParts={STAGE_PARTS} />
+            {viewportLive ? (
+              <SceneSlot label="Incident view">
+                <PitchCanvas sim={simulation} timeRef={timeRef} onFreeze={freezeContact} viewportParts={STAGE_PARTS} />
+              </SceneSlot>
+            ) : null}
           </Card>
 
           <Card>
@@ -240,17 +421,21 @@ export default function PitchTab() {
 
           <div className={`${viewportStyles.insetFrame} ${viewportStyles.insetFramePanel}`}>
             <div className={viewportStyles.contactSceneLayer}>
-              <ContactCameraScene
-                sim={simulation}
-                timeRef={timeRef}
-                cameraPreset={state.camera.preset}
-                showSkeleton={state.overlays.skeleton}
-                showLabels={state.overlays.labels}
-                showTrajectory={state.overlays.trajectory}
-                showForces={state.overlays.forces}
-                dual={false}
-                contactView
-              />
+              {contactMounted ? (
+                <SceneSlot label="Contact camera">
+                  <ContactCameraScene
+                    sim={simulation}
+                    timeRef={timeRef}
+                    cameraPreset={state.camera.preset}
+                    showSkeleton={state.overlays.skeleton}
+                    showLabels={state.overlays.labels}
+                    showTrajectory={state.overlays.trajectory}
+                    showForces={state.overlays.forces}
+                    dual={false}
+                    contactView
+                  />
+                </SceneSlot>
+              ) : null}
             </div>
             <div className={viewportStyles.insetHead}>
               <span><i /> CONTACT CAM</span>
