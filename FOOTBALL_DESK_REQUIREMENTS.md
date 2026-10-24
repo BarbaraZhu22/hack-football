@@ -6,7 +6,7 @@ This document is the single source of truth for scope, architecture, and contrib
 
 ## 1. Goals
 
-Football Desk is a web workspace for a football-themed experience with:
+Football Desk is a web workspace for a football-themed experience with
 
 - A persistent **shell** (logo, navigation, theme switch, agent chat).
 - Three **tabs**: Pitch (3D), Match (live desk data), Tactics (overlays and commands).
@@ -50,12 +50,17 @@ apps/web/
     api/
       chat/route.js
       match/route.js
+  public/
+    models/
+      body/               # character mesh + LICENSE-*.txt, README.md
+      clips/              # one .glb per action (see §2.5)
   components/
     ui/                 # Atomic UI (shadcn + chat primitives)
     theme/              # ThemeProvider
     layout/             # DeskLayout (single app shell)
     chat/               # AgentChat (shared across tabs)
-    three/              # PitchCanvas (sole WebGL entry)
+    three/              # WebGL / R3F (see §2.5)
+      actions/          # catalog.js, retarget.js, pose.js
     pitch/              # Pitch tab UI only
     match/              # Match tab UI only
     tactics/            # Tactics tab UI only
@@ -89,7 +94,7 @@ When adding UI or behavior:
 
 | Location | Owns |
 |----------|------|
-| `components/pitch/` | Everything UI-specific to the Pitch tab (except WebGL canvas implementation). |
+| `components/pitch/` | Pitch tab UI, including viewport chrome (`ViewportChrome`, minimap, co-located CSS). |
 | `components/match/` | Everything UI-specific to the Match tab. |
 | `components/tactics/` | Everything UI-specific to the Tactics tab. |
 | `components/three/` | WebGL / R3F rendering only; subscribes to `lib/scene` state. |
@@ -100,6 +105,24 @@ When adding UI or behavior:
 | `lib/scene/` | Scene state and command reducer; **no** Three imports. |
 
 **Principle:** Except for **`three/`** and **`chat/`**, tab-specific components live under that tab’s folder. Shared shell pieces live in **`layout/`**; shared atoms in **`ui/`**.
+
+### 2.5 Character actions and assets (`components/three/`)
+
+Backend (or simulation) supplies an **action name** (for example `run`, `slide`, `carry`). Only [`components/three/actions/catalog.js`](apps/web/components/three/actions/catalog.js) maps that name to playback:
+
+| Catalog entry | Meaning |
+|---------------|---------|
+| `{ kind: "clip", url: "..." }` | Load the `.glb` from `public/models/clips/` (URL `/models/clips/...`) and play it via `actions/retarget.js`. |
+| `{ kind: "pose", pose: "..." }` | No clip yet; apply procedural pose via `actions/pose.js`. |
+
+Rules:
+
+- **Canonical asset root:** `public/models/` only. Next.js serves these at `/models/...`; Three.js loaders and [`actions/catalog.js`](apps/web/components/three/actions/catalog.js) use those URLs. Do **not** duplicate meshes under `components/three/`. There is no `/api/models` route.
+- **One clip file per action** under `public/models/clips/`. Do not put JavaScript inside `public/models/`.
+- **Character body mesh** lives under `public/models/body/` (include `LICENSE-CHARACTERS.txt`, `LICENSE-ANIMATIONS.txt`, and `README.md` for provenance).
+- **Adding an action** = one catalog row + optional new clip file in `public/models/clips/`. Do not add a new React component per action.
+- **`kit.js`** stays at `components/three/kit.js` (jersey colours, not actions).
+- Viewport chrome lives under `components/pitch/` (DOM overlay, not part of the WebGL action pipeline).
 
 ---
 

@@ -1,55 +1,32 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { LayoutGrid } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useScene } from "@/lib/scene/SceneProvider";
+import { Card, CardContent } from "@/components/ui/card";
 
 export default function TacticsTab() {
-  const { run, state } = useScene();
-
-  function demoArrow() {
-    run([
-      {
-        type: "arrow.add",
-        id: "demo-run",
-        from: [-4, 0.2, 0],
-        to: [6, 0.2, -3],
-      },
-      {
-        type: "highlight",
-        target: "player",
-        id: "10",
-      },
-    ]);
-  }
-
-  function clearTactics() {
-    run([{ type: "arrow.clear" }, { type: "highlight", target: "player", id: null }]);
-  }
-
   return (
-    <div className="flex flex-col gap-4">
-      <Badge>Tactics</Badge>
-      <Card>
-        <CardHeader>
-          <CardTitle>Tactics board</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <p className="text-muted-foreground">
-            Draw runs and highlights on the pitch via scene commands. Agent replies
-            can also push the same actions.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={demoArrow}>
-              Demo arrow
-            </Button>
-            <Button size="sm" variant="outline" onClick={clearTactics}>
-              Clear
-            </Button>
+    <div className="flex h-full flex-col gap-4">
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <Badge>Analysis</Badge>
+          <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Workspace</span>
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">Deeper analysis is on the way</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+          This page is reserved for season-level trends, referee consistency dashboards and cross-match benchmarks. The design is still in progress.
+        </p>
+      </div>
+
+      <Card className="flex min-h-[360px] flex-1 items-center justify-center">
+        <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+          <div className="grid size-12 place-items-center rounded-full bg-muted">
+            <LayoutGrid className="size-6 text-muted-foreground" />
           </div>
-          <p className="text-muted-foreground">
-            Active arrows: {state.arrows.length}
+          <Badge variant="outline">Placeholder</Badge>
+          <p className="max-w-md text-sm leading-6 text-muted-foreground">
+            Season trends, consistency benchmarks and cross-match analytics will live here.
           </p>
         </CardContent>
       </Card>

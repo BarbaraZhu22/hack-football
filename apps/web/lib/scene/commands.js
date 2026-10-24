@@ -1,17 +1,56 @@
-export const initialSceneState = {
-  camera: {
-    position: [0, 18, 28],
-    lookAt: [0, 0, 0],
-  },
-  players: [
-    { id: "9", team: "home", position: [-2, 0.45, 1] },
-    { id: "10", team: "home", position: [1, 0.45, -1] },
-    { id: "7", team: "away", position: [3, 0.45, 2] },
-  ],
-  ball: { position: [0, 0.2, 0] },
-  arrows: [],
-  highlight: null,
-};
+import { buildSimulation, sampleFrame } from "@/lib/incident-simulation";
+
+const incidentSimulation = buildSimulation();
+
+export const initialSceneState = createInitialSceneState();
+
+function createInitialSceneState() {
+  const incidentTime = incidentSimulation.contactT;
+  const incidentFrame = sampleFrame(incidentSimulation, incidentTime);
+
+  return {
+    camera: {
+      preset: "touchline",
+      position: [40, 11, 24],
+      lookAt: [27, 0, 10],
+    },
+    players: [
+      { id: "6", team: "home", position: [incidentFrame.tackler.x, incidentFrame.tackler.comY, incidentFrame.tackler.z] },
+      { id: "8", team: "away", position: [incidentFrame.carrier.x, incidentFrame.carrier.comY, incidentFrame.carrier.z] },
+    ],
+    ball: { position: [incidentFrame.ball.p.x, incidentFrame.ball.p.y, incidentFrame.ball.p.z] },
+    arrows: [],
+    highlight: null,
+    incident: {
+      time: incidentTime,
+      duration: incidentSimulation.duration,
+      contactTime: incidentSimulation.contactT,
+      frame: incidentFrame,
+    },
+    overlays: {
+      skeleton: false,
+      labels: true,
+      trajectory: true,
+      forces: true,
+      dual: true,
+    },
+  };
+}
+
+function withIncidentFrame(state, time) {
+  const nextTime = Math.max(0, Math.min(incidentSimulation.duration, Number(time) || 0));
+  const frame = sampleFrame(incidentSimulation, nextTime);
+
+  return {
+    ...state,
+    incident: { ...state.incident, time: nextTime, frame },
+    players: [
+      { id: "6", team: "home", position: [frame.tackler.x, frame.tackler.comY, frame.tackler.z] },
+      { id: "8", team: "away", position: [frame.carrier.x, frame.carrier.comY, frame.carrier.z] },
+    ],
+    ball: { position: [frame.ball.p.x, frame.ball.p.y, frame.ball.p.z] },
+  };
+}
 
 export function applySceneAction(state, action) {
   if (!action?.type) return state;
@@ -21,6 +60,7 @@ export function applySceneAction(state, action) {
       return {
         ...state,
         camera: {
+          preset: action.preset ?? state.camera.preset,
           position: action.position ?? state.camera.position,
           lookAt: action.lookAt ?? state.camera.lookAt,
         },
@@ -41,8 +81,8 @@ export function applySceneAction(state, action) {
       const next = state.arrows.filter((arrow) => arrow.id !== action.id);
       next.push({
         id: action.id ?? `arrow-${next.length + 1}`,
-        from: action.from ?? [0, 0, 0],
-        to: action.to ?? [0, 0, 0],
+        from: action.from ?? [0, 0.2, 0],
+        to: action.to ?? [0, 0.2, 0],
       });
       return { ...state, arrows: next };
     }
@@ -56,8 +96,19 @@ export function applySceneAction(state, action) {
           id: action.id ?? null,
         },
       };
+    case "incident.seek":
+      return withIncidentFrame(state, action.time);
+    case "pitch.overlay.set":
+      if (!Object.hasOwn(state.overlays, action.key)) return state;
+      return {
+        ...state,
+        overlays: {
+          ...state.overlays,
+          [action.key]: Boolean(action.enabled),
+        },
+      };
     case "reset":
-      return { ...initialSceneState };
+      return createInitialSceneState();
     default:
       return state;
   }
