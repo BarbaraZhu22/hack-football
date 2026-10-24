@@ -4,9 +4,6 @@ const path = require("path");
 const nextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname),
-  outputFileTracingIncludes: {
-    "/api/models/[...assetPath]": ["./components/three/models/**/*"],
-  },
 };
 
 module.exports = nextConfig;

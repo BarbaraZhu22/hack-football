@@ -50,6 +50,10 @@ apps/web/
     api/
       chat/route.js
       match/route.js
+  public/
+    models/
+      body/               # character mesh + LICENSE-*.txt, README.md
+      clips/              # one .glb per action (see §2.5)
   components/
     ui/                 # Atomic UI (shadcn + chat primitives)
     theme/              # ThemeProvider
@@ -57,8 +61,6 @@ apps/web/
     chat/               # AgentChat (shared across tabs)
     three/              # WebGL / R3F (see §2.5)
       actions/          # catalog.js, retarget.js, pose.js
-      models/body/      # character mesh (mirrored in public/models/body/)
-      models/clips/     # one .glb per action (mirrored in public/models/clips/)
     pitch/              # Pitch tab UI only
     match/              # Match tab UI only
     tactics/            # Tactics tab UI only
@@ -110,14 +112,15 @@ Backend (or simulation) supplies an **action name** (for example `run`, `slide`,
 
 | Catalog entry | Meaning |
 |---------------|---------|
-| `{ kind: "clip", url: "..." }` | Load the `.glb` from `models/clips/` and play it via `actions/retarget.js`. |
+| `{ kind: "clip", url: "..." }` | Load the `.glb` from `public/models/clips/` (URL `/models/clips/...`) and play it via `actions/retarget.js`. |
 | `{ kind: "pose", pose: "..." }` | No clip yet; apply procedural pose via `actions/pose.js`. |
 
 Rules:
 
-- **One clip file per action** under `public/models/clips/` and `components/three/models/clips/` (same relative paths). Do not put JavaScript in `models/`.
-- **Character body mesh** lives under `models/body/` (mirrored in `public/models/body/`).
-- **Adding an action** = one catalog row + optional new clip file. Do not add a new React component per action.
+- **Canonical asset root:** `public/models/` only. Next.js serves these at `/models/...`; Three.js loaders and [`actions/catalog.js`](apps/web/components/three/actions/catalog.js) use those URLs. Do **not** duplicate meshes under `components/three/`. There is no `/api/models` route.
+- **One clip file per action** under `public/models/clips/`. Do not put JavaScript inside `public/models/`.
+- **Character body mesh** lives under `public/models/body/` (include `LICENSE-CHARACTERS.txt`, `LICENSE-ANIMATIONS.txt`, and `README.md` for provenance).
+- **Adding an action** = one catalog row + optional new clip file in `public/models/clips/`. Do not add a new React component per action.
 - **`kit.js`** stays at `components/three/kit.js` (jersey colours, not actions).
 - Viewport chrome (`ViewportChrome`, minimap) may stay under `components/three/` or move to `components/pitch/`; it is not part of the action pipeline.
 

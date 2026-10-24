@@ -1,0 +1,17 @@
+Universal Base Characters [Standard] — Quaternius
+https://quaternius.com/packs/universalbasecharacters.html
+https://quaternius.itch.io/universal-base-characters
+
+License: Creative Commons CC0 1.0 Universal (public domain dedication)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+You may copy, modify, distribute, and use the assets for any purpose,
+including commercial use, without asking permission or giving credit.
+
+Files covered in this directory (Football Desk subset):
+  Superhero_Male_FullBody.gltf
+  Superhero_Male_FullBody.bin
+  T_*.png (character textures referenced by the glTF)
+
+Downloaded 2026-09-09 from the free Standard archive
+(Universal Base Characters[Standard].zip). See README.md for archive SHA-256.
