@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 import { prepareHero } from './kit';
 import { buildRig, poseCarrier, poseTackler } from './actions/pose';
-import { BODY_MODEL_URL, getClipUrl } from './actions/catalog';
+import { getBodyModelUrl, getClipUrl } from './actions/catalog';
 import { sampleFrame } from '@/lib/incident-simulation';
 import { createRunPlayer, retargetRun, setRunTime } from './actions/retarget';
 function makeLabelTexture(name, number, color, role) {
@@ -131,7 +131,7 @@ function buildSkeletonOverlay() {
     return { group, update };
 }
 export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels }) {
-    const gltf = useLoader(GLTFLoader, BODY_MODEL_URL);
+    const gltf = useLoader(GLTFLoader, getBodyModelUrl());
     const runGltf = useLoader(GLTFLoader, getClipUrl('run'));
     const scene = useThree((state) => state.scene);
     const runPlayer = useMemo(() => createRunPlayer(runGltf), [runGltf]);

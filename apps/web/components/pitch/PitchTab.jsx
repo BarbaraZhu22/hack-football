@@ -32,7 +32,7 @@ import { MATCH } from "@/lib/incident";
 import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { useScene } from "@/lib/scene/SceneProvider";
-import { BODY_MODEL_URL, getClipUrl } from "@/components/three/actions/catalog";
+import { getBodyModelUrl, getClipUrl } from "@/components/three/actions/catalog";
 import { ContactEnvelope } from "@/components/three/ViewportChrome";
 import Minimap from "@/components/three/ViewportMinimap";
 import viewportStyles from "@/components/three/ViewportChrome.module.css";
@@ -58,16 +58,12 @@ const ContactCameraScene = dynamic(() => import("@/components/three/Scene").then
 const SCENE_READY_TIMEOUT_MS = 4000;
 const SCENE_MAX_RETRIES = 3;
 
-// Assets consumed by the actor rigs inside the 3D viewports.
-const HERO_MODEL_URL = BODY_MODEL_URL;
-const RUN_CLIP_URL = getClipUrl("run");
-
 // Populates the shared suspense cache for the two gltf assets. Effects in
 // this component only run once the loads have resolved, so onReady fires
 // exactly when the cache is warm.
 function AssetWarmup({ onReady }) {
-  useLoader(GLTFLoader, HERO_MODEL_URL);
-  useLoader(GLTFLoader, RUN_CLIP_URL);
+  useLoader(GLTFLoader, getBodyModelUrl());
+  useLoader(GLTFLoader, getClipUrl("run"));
   useEffect(() => {
     onReady();
   }, [onReady]);
@@ -179,6 +175,7 @@ export default function PitchTab() {
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(0.5);
   const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
+  const [canWarmAssets, setCanWarmAssets] = useState(false);
   const searchParams = useSearchParams();
   const incident = INCIDENTS.find((item) => item.id === incidentId) ?? INCIDENTS[0];
   const incidentActive = incident.status === "active";
@@ -190,6 +187,10 @@ export default function PitchTab() {
   );
 
   timeRef.current = time;
+
+  useEffect(() => {
+    setCanWarmAssets(true);
+  }, []);
 
   const seek = useCallback((nextTime) => {
     run([{ type: "incident.seek", time: nextTime }]);
@@ -356,7 +357,7 @@ export default function PitchTab() {
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_255px]">
-        {incidentActive ? (
+        {canWarmAssets && incidentActive ? (
           <SceneErrorBoundary onCrash={handleAssetsReady} fallback={null}>
             <Suspense fallback={null}>
               <AssetWarmup onReady={handleAssetsReady} />
