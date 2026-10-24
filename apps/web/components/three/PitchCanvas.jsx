@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Scan } from "lucide-react";
-import styles from "./ViewportChrome.module.css";
+import styles from "@/components/pitch/ViewportChrome.module.css";
 import { Scene } from "@/components/three/Scene";
-import ViewportChrome from "@/components/three/ViewportChrome";
+import ViewportChrome from "@/components/pitch/ViewportChrome";
 import { useScene } from "@/lib/scene/SceneProvider";
 
 export default function PitchCanvas({ sim, timeRef, onFreeze, viewportParts }) {

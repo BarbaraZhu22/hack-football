@@ -94,7 +94,7 @@ When adding UI or behavior:
 
 | Location | Owns |
 |----------|------|
-| `components/pitch/` | Everything UI-specific to the Pitch tab (except WebGL canvas implementation). |
+| `components/pitch/` | Pitch tab UI, including viewport chrome (`ViewportChrome`, minimap, co-located CSS). |
 | `components/match/` | Everything UI-specific to the Match tab. |
 | `components/tactics/` | Everything UI-specific to the Tactics tab. |
 | `components/three/` | WebGL / R3F rendering only; subscribes to `lib/scene` state. |
@@ -122,7 +122,7 @@ Rules:
 - **Character body mesh** lives under `public/models/body/` (include `LICENSE-CHARACTERS.txt`, `LICENSE-ANIMATIONS.txt`, and `README.md` for provenance).
 - **Adding an action** = one catalog row + optional new clip file in `public/models/clips/`. Do not add a new React component per action.
 - **`kit.js`** stays at `components/three/kit.js` (jersey colours, not actions).
-- Viewport chrome (`ViewportChrome`, minimap) may stay under `components/three/` or move to `components/pitch/`; it is not part of the action pipeline.
+- Viewport chrome lives under `components/pitch/` (DOM overlay, not part of the WebGL action pipeline).
 
 ---
 

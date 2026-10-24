@@ -33,9 +33,9 @@ import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { getBodyModelUrl, getClipUrl } from "@/components/three/actions/catalog";
-import { ContactEnvelope } from "@/components/three/ViewportChrome";
-import Minimap from "@/components/three/ViewportMinimap";
-import viewportStyles from "@/components/three/ViewportChrome.module.css";
+import { ContactEnvelope } from "@/components/pitch/ViewportChrome";
+import Minimap from "@/components/pitch/ViewportMinimap";
+import viewportStyles from "@/components/pitch/ViewportChrome.module.css";
 
 const PitchCanvas = dynamic(() => import("@/components/three/PitchCanvas"), {
   ssr: false,
