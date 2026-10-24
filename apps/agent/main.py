@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from providers.microsoft import chat as microsoft_chat
@@ -37,9 +37,12 @@ def match():
 
 
 @app.post("/api/chat")
-def chat_endpoint(body: ChatRequest):
+async def chat_endpoint(body: ChatRequest):
     payload: dict[str, Any] = {
         "messages": [message.model_dump() for message in body.messages],
         "context": body.context.model_dump() if body.context else {},
     }
-    return microsoft_chat(payload["messages"], payload.get("context"))
+    try:
+        return await microsoft_chat(payload["messages"], payload.get("context"))
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
