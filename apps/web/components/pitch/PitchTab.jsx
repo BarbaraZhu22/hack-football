@@ -32,6 +32,7 @@ import { MATCH } from "@/lib/incident";
 import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { useScene } from "@/lib/scene/SceneProvider";
+import { BODY_MODEL_URL, getClipUrl } from "@/components/three/actions/catalog";
 import { ContactEnvelope } from "@/components/three/ViewportChrome";
 import Minimap from "@/components/three/ViewportMinimap";
 import viewportStyles from "@/components/three/ViewportChrome.module.css";
@@ -58,8 +59,8 @@ const SCENE_READY_TIMEOUT_MS = 4000;
 const SCENE_MAX_RETRIES = 3;
 
 // Assets consumed by the actor rigs inside the 3D viewports.
-const HERO_MODEL_URL = "/models/quaternius/Superhero_Male_FullBody.gltf";
-const RUN_CLIP_URL = "/models/mixamo/Standard_Run.glb";
+const HERO_MODEL_URL = BODY_MODEL_URL;
+const RUN_CLIP_URL = getClipUrl("run");
 
 // Populates the shared suspense cache for the two gltf assets. Effects in
 // this component only run once the loads have resolved, so onReady fires

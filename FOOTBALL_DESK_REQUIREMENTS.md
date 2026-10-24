@@ -55,7 +55,10 @@ apps/web/
     theme/              # ThemeProvider
     layout/             # DeskLayout (single app shell)
     chat/               # AgentChat (shared across tabs)
-    three/              # PitchCanvas (sole WebGL entry)
+    three/              # WebGL / R3F (see §2.5)
+      actions/          # catalog.js, retarget.js, pose.js
+      models/body/      # character mesh (mirrored in public/models/body/)
+      models/clips/     # one .glb per action (mirrored in public/models/clips/)
     pitch/              # Pitch tab UI only
     match/              # Match tab UI only
     tactics/            # Tactics tab UI only
@@ -100,6 +103,23 @@ When adding UI or behavior:
 | `lib/scene/` | Scene state and command reducer; **no** Three imports. |
 
 **Principle:** Except for **`three/`** and **`chat/`**, tab-specific components live under that tab’s folder. Shared shell pieces live in **`layout/`**; shared atoms in **`ui/`**.
+
+### 2.5 Character actions and assets (`components/three/`)
+
+Backend (or simulation) supplies an **action name** (for example `run`, `slide`, `carry`). Only [`components/three/actions/catalog.js`](apps/web/components/three/actions/catalog.js) maps that name to playback:
+
+| Catalog entry | Meaning |
+|---------------|---------|
+| `{ kind: "clip", url: "..." }` | Load the `.glb` from `models/clips/` and play it via `actions/retarget.js`. |
+| `{ kind: "pose", pose: "..." }` | No clip yet; apply procedural pose via `actions/pose.js`. |
+
+Rules:
+
+- **One clip file per action** under `public/models/clips/` and `components/three/models/clips/` (same relative paths). Do not put JavaScript in `models/`.
+- **Character body mesh** lives under `models/body/` (mirrored in `public/models/body/`).
+- **Adding an action** = one catalog row + optional new clip file. Do not add a new React component per action.
+- **`kit.js`** stays at `components/three/kit.js` (jersey colours, not actions).
+- Viewport chrome (`ViewportChrome`, minimap) may stay under `components/three/` or move to `components/pitch/`; it is not part of the action pipeline.
 
 ---
 
