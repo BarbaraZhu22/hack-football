@@ -1,12 +1,14 @@
+import { MATCH } from "./incident";
+
 // Registry of controversial decisions under review.
-// The first entry owns a full 3D reconstruction; the remaining entries are
+// Tackle and offside have full 3D reconstructions; the other entries remain
 // placeholders until their scenes are designed and built.
 export const INCIDENTS = [
   {
     id: "tackle",
     label: "Tackle Controversy",
     short: "Tackle",
-    minute: "78:42",
+    minute: "77:38",
     rating: "red",
     status: "active",
     incidentId: "MCI-ARS-7829-04",
@@ -19,16 +21,16 @@ export const INCIDENTS = [
     short: "Offside",
     minute: "27:10",
     rating: "amber",
-    status: "placeholder",
+    status: "active",
     incidentId: "MCI-ARS-7829-02",
     summary:
-      "Marginal offside call on a disallowed goal. The offside line is derived from a single tracking frame; reconstruction pending.",
+      "Marginal offside call on a disallowed goal. The reconstruction freezes at pass release and compares the receiver with the second-last-opponent line.",
   },
   {
     id: "handball",
     label: "Handball Controversy",
     short: "Handball",
-    minute: "85:03",
+    minute: "74:05",
     rating: "amber",
     status: "placeholder",
     incidentId: "MCI-ARS-7829-05",
@@ -39,7 +41,7 @@ export const INCIDENTS = [
     id: "conflict",
     label: "Player Conflict",
     short: "Conflict",
-    minute: "90+1",
+    minute: "78:14",
     rating: "red",
     status: "placeholder",
     incidentId: "MCI-ARS-7829-06",
@@ -147,17 +149,8 @@ export const MATCH_DECISIONS = [
     meta: "VAR · 4 cm",
   },
   {
-    id: "d-tackle",
-    minute: 78,
-    label: "Tackle",
-    detail: "Studs above the ankle. Controversial - open the 3D review.",
-    rating: "red",
-    incidentId: "tackle",
-    meta: "Law 12.2",
-  },
-  {
     id: "d-handball-appeal",
-    minute: 85,
+    minute: 74,
     label: "Handball appeal",
     detail: "Penalty awarded on review; attempt saved.",
     rating: "amber",
@@ -166,34 +159,117 @@ export const MATCH_DECISIONS = [
   },
   {
     id: "d-time-wasting",
-    minute: 88,
+    minute: 76,
     label: "Time-wasting warning",
     detail: "Warning issued for delaying the restart.",
     rating: "green",
     meta: "Law 12",
   },
   {
+    id: "d-tackle",
+    minute: 77,
+    label: "Tackle",
+    detail: "Studs above the ankle. Controversial - open the 3D review.",
+    rating: "red",
+    incidentId: "tackle",
+    meta: "Law 12.2",
+  },
+  {
     id: "d-conflict",
-    minute: 91,
-    minuteLabel: "90+1",
+    minute: 78,
     label: "Player conflict",
-    detail: "Post-whistle confrontation between both squads.",
+    detail: "Post-whistle confrontation after the final challenge.",
     rating: "red",
     incidentId: "conflict",
     meta: "Law 12",
   },
 ];
 
-// Key match events plotted on the momentum chart: goals, penalties,
-// missed penalties, cards and substitutions, coloured by team.
+// Key match events, shared by the momentum chart, the events timeline and the
+// live commentary so all of them read from one source of truth. `player` is
+// the actor (scorer, offender, substitute coming on), `assist` the assist
+// provider, `note` the short reason, `score` the running score after the event.
+// Every entry sits at or before the live clock (MATCH.clock, 78:32).
 export const MATCH_EVENTS = [
-  { minute: 23, type: "goal", team: "home", label: "MCI goal - 1-0" },
-  { minute: 27, type: "var", team: "away", label: "ARS goal ruled out (offside)", incidentId: "offside" },
-  { minute: 41, type: "yellow", team: "away", label: "ARS yellow card" },
-  { minute: 46, type: "goal", team: "away", label: "ARS goal - 1-1" },
-  { minute: 61, type: "yellow", team: "home", label: "MCI yellow card" },
-  { minute: 70, type: "sub", team: "home", label: "MCI substitution" },
-  { minute: 73, type: "penalty-goal", team: "home", label: "MCI penalty goal - 2-1" },
-  { minute: 78, type: "red", team: "home", label: "MCI red card (VAR)", incidentId: "tackle" },
-  { minute: 85, type: "penalty-missed", team: "away", label: "ARS penalty saved", incidentId: "handball" },
+  {
+    minute: 23,
+    type: "goal",
+    team: "home",
+    label: "MCI goal - 1-0",
+    player: "Foden",
+    assist: "De Bruyne",
+    score: "1-0",
+  },
+  {
+    minute: 27,
+    type: "var",
+    team: "away",
+    label: "ARS goal ruled out (offside)",
+    player: "Jesus",
+    note: "Offside · goal disallowed",
+    incidentId: "offside",
+  },
+  {
+    minute: 41,
+    type: "yellow",
+    team: "away",
+    label: "ARS yellow card",
+    player: "Partey",
+    note: "Tactical foul",
+  },
+  {
+    minute: 46,
+    type: "goal",
+    team: "away",
+    label: "ARS goal - 1-1",
+    player: "Saka",
+    assist: "Odegaard",
+    score: "1-1",
+  },
+  {
+    minute: 61,
+    type: "yellow",
+    team: "home",
+    label: "MCI yellow card",
+    player: "Rodri",
+    note: "Late challenge",
+  },
+  {
+    minute: 66,
+    type: "penalty-goal",
+    team: "home",
+    label: "MCI penalty goal - 2-1",
+    player: "Haaland",
+    score: "2-1",
+  },
+  {
+    minute: 70,
+    type: "sub",
+    team: "home",
+    label: "MCI substitution",
+    player: "Kovacic",
+    replaced: "Gundogan",
+  },
+  {
+    minute: 74,
+    type: "penalty-missed",
+    team: "away",
+    label: "ARS penalty saved",
+    player: "Saka",
+    note: "Saved by Ederson",
+    incidentId: "handball",
+  },
+  {
+    minute: 77,
+    type: "red",
+    team: "home",
+    label: "MCI red card (VAR)",
+    player: "Gvardiol",
+    note: "Serious foul play · VAR review",
+    incidentId: "tackle",
+  },
 ];
+
+// Phase markers for the events timeline. The match is still in play at
+// MATCH.clock (78:32), so only half-time exists - no full-time marker yet.
+export const MATCH_PHASES = [{ minute: 45, kind: "ht", label: "Half-time", score: "1-0" }];

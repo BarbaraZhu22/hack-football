@@ -4,7 +4,7 @@ export const MATCH = {
     home: { code: 'MCI', name: 'Manchester City', color: '#6CABDD', text: '#0b2132' },
     away: { code: 'ARS', name: 'Arsenal', color: '#EF0107', text: '#ffffff' },
     score: [2, 1],
-    clock: '78:42',
+    clock: '78:32',
     stadium: 'Etihad Stadium',
     attendance: '54,118',
     incidentId: 'MCI-ARS-7829-04',

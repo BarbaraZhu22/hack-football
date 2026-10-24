@@ -248,7 +248,7 @@ function makeRibbonTexture() {
     ctx.textBaseline = 'middle';
     for (let i = 0; i < 5; i++) {
         ctx.globalAlpha = 0.72;
-        ctx.fillText(i % 2 === 0 ? 'PREMIER LEAGUE  ·  MATCH REVIEW' : 'MCI 2 — 1 ARS  ·  78:42', 24 + i * 420, H / 2);
+        ctx.fillText(i % 2 === 0 ? 'PREMIER LEAGUE  ·  MATCH REVIEW' : 'MCI 2 — 1 ARS  ·  78:32', 24 + i * 420, H / 2);
     }
     ctx.globalAlpha = 1;
     const tex = new THREE.CanvasTexture(c);
@@ -284,7 +284,7 @@ function makeScreenTexture() {
     ctx.fillText('ARS', 610, 226);
     ctx.fillStyle = '#96a9a0';
     ctx.font = '500 28px IBM Plex Mono, monospace';
-    ctx.fillText('78:42  ·  SECOND HALF  ·  VAR CHECK', 62, 306);
+    ctx.fillText('78:32  ·  SECOND HALF  ·  VAR CHECK', 62, 306);
     ctx.fillStyle = 'rgba(183,244,212,.12)';
     ctx.fillRect(50, 352, W - 100, 2);
     ctx.fillStyle = '#d7e8de';

@@ -59,7 +59,7 @@ const SKELETON_PAIRS = [
     ['pelvis', 'thigh_l'], ['thigh_l', 'calf_l'], ['calf_l', 'foot_l'], ['foot_l', 'ball_l'],
     ['pelvis', 'thigh_r'], ['thigh_r', 'calf_r'], ['calf_r', 'foot_r'], ['foot_r', 'ball_r'],
 ];
-function buildSkeletonOverlay() {
+export function buildSkeletonOverlay() {
     const group = new THREE.Group();
     group.renderOrder = 18;
     const boneMat = new THREE.MeshBasicMaterial({

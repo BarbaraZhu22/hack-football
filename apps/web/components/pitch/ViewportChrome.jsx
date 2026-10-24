@@ -42,17 +42,20 @@ export default function ViewportChrome({
   onFreeze,
   parts,
 }) {
-  const frozen = Math.abs(time - sim.contactT) < 0.035;
+  const offside = sim.kind === "offside";
+  const frozen = offside
+    ? time >= sim.contactT
+    : Math.abs(time - sim.contactT) < 0.035;
 
   return (
     <>
       {parts.identity && (
         <div className={styles.stageTitle}>
           <div className={styles.incidentTag}>
-            <span className={styles.liveDot} /> INCIDENT 04 · <b>{MATCH.clock}</b>
+          <span className={styles.liveDot} /> INCIDENT {offside ? "02" : "04"} · <b>{offside ? "27:10" : MATCH.clock}</b>
           </div>
-          <h2>Serious foul play<span>?</span></h2>
-          <p>Late sliding challenge · contact above the ankle · no ball first</p>
+          <h2>{offside ? "Offside position" : "Serious foul play"}<span>?</span></h2>
+          <p>{offside ? "Pass release · second-last-opponent line" : "Late sliding challenge · contact above the ankle · no ball first"}</p>
           <div className={styles.stageMeta}>
             <span>MCI {MATCH.score[0]}–{MATCH.score[1]} ARS</span>
             <i />
@@ -120,7 +123,7 @@ export default function ViewportChrome({
       {parts.freeze && frozen && (
         <div className={styles.freezeBadge}>
           <span className={styles.freezeBars}><i /><i /><i /></span>
-          FRAME HELD · 100 FPS
+          {offside ? "PASS RELEASE" : "FRAME HELD"} · 100 FPS
         </div>
       )}
 
@@ -131,10 +134,10 @@ export default function ViewportChrome({
       {parts.footer && (
         <div className={styles.stageFooter}>
           <span><ShieldCheck size={12} /> RF-7829 / CAM 02</span>
-          <span><Layers3 size={12} /> 65-JOINT IK · CONTACT SOLVER</span>
+          <span><Layers3 size={12} /> 65-JOINT IK · {offside ? "PASS RETARGET" : "CONTACT SOLVER"}</span>
           <span className={styles.credit}>MODEL · QUATERNIUS CC0</span>
           <span><Gauge size={12} /> 120 HZ DETERMINISTIC</span>
-          <span className={styles.footerRight}><Users size={12} /> 2 TRACKED SUBJECTS</span>
+          <span className={styles.footerRight}><Users size={12} /> {offside ? 3 : 2} TRACKED SUBJECTS</span>
         </div>
       )}
     </>
@@ -156,6 +159,24 @@ export function ContactEnvelope({ sim, onFreeze, variant = "viewport" }) {
         <div><span>Ball contact</span><b className={styles.danger}>+{Math.round(sim.impact.ballDelay * 1000)} <small>ms</small></b></div>
       </div>
       <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE CONTACT</button>
+    </section>
+  );
+}
+
+export function OffsideEnvelope({ sim, onFreeze, variant = "viewport" }) {
+  const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
+  const margin = sim.offside.receiverMargin;
+
+  return (
+    <section className={className}>
+      <div className={styles.eventCardHead}><Crosshair size={13} /> OFFSIDE REVIEW</div>
+      <div className={styles.eventRows}>
+        <div><span>Review frame</span><b>PASS RELEASE</b></div>
+        <div><span>Second-last opponent</span><b>BLUE #6</b></div>
+        <div><span>Receiver position</span><b className={margin > 0 ? styles.danger : ""}>{margin > 0 ? "OFFSIDE" : "ONSIDE"}</b></div>
+        <div><span>Goalward margin</span><b>{margin >= 0 ? "+" : ""}{margin.toFixed(2)} <small>m</small></b></div>
+      </div>
+      <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE PASS</button>
     </section>
   );
 }

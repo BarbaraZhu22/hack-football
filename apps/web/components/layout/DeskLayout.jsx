@@ -29,6 +29,10 @@ export default function DeskLayout({ children }) {
   const { theme, setTheme, themes } = useTheme();
   const activeTheme = themes.find((item) => item.id === theme);
 
+  // The overview desk hosts the agent in its centre column, so the shared
+  // right-hand rail is dropped there to avoid two live copies of the chat.
+  const showAgentRail = pathname !== "/overview";
+
   return (
     <div className="flex min-h-dvh flex-col bg-background lg:h-dvh lg:overflow-hidden">
       <header className="border-b bg-card/80 backdrop-blur">
@@ -78,28 +82,37 @@ export default function DeskLayout({ children }) {
         </div>
       </header>
 
-      <div className="grid min-h-0 w-full flex-1 gap-4 px-3 py-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div
+        className={cn(
+          "grid min-h-0 w-full flex-1 gap-4 px-3 py-4",
+          showAgentRail && "lg:grid-cols-[minmax(0,1fr)_320px]",
+        )}
+      >
         <main className="min-h-0">{children}</main>
 
-        <aside className="hidden min-h-0 lg:block">
-          <AgentChat />
-        </aside>
+        {showAgentRail ? (
+          <aside className="hidden min-h-0 lg:block">
+            <AgentChat />
+          </aside>
+        ) : null}
       </div>
 
-      <div className="border-t bg-card p-3 lg:hidden">
-        <details className="group">
-          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md border px-3 py-2 text-sm font-medium">
-            <span className="inline-flex items-center gap-2">
-              <MessageSquare className="size-4" />
-              Agent chat
-            </span>
-            <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-          </summary>
-          <div className={cn("mt-3 h-[420px]")}>
-            <AgentChat />
-          </div>
-        </details>
-      </div>
+      {showAgentRail ? (
+        <div className="border-t bg-card p-3 lg:hidden">
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center justify-between rounded-md border px-3 py-2 text-sm font-medium">
+              <span className="inline-flex items-center gap-2">
+                <MessageSquare className="size-4" />
+                Agent chat
+              </span>
+              <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className={cn("mt-3 h-[420px]")}>
+              <AgentChat />
+            </div>
+          </details>
+        </div>
+      ) : null}
     </div>
   );
 }

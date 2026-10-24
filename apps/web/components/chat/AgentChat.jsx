@@ -21,7 +21,9 @@ function tabFromPathname(pathname) {
   return "pitch";
 }
 
-export default function AgentChat() {
+// Conversation body without the card chrome, so a page can embed the agent
+// inside its own panel (the overview desk does exactly that).
+export function AgentConversation({ placeholder }) {
   const pathname = usePathname();
   const { run } = useScene();
   const [messages, setMessages] = useState([
@@ -61,6 +63,32 @@ export default function AgentChat() {
   }
 
   return (
+    <Conversation className="min-h-0 flex-1">
+      <ConversationContent>
+        {messages.length === 0 ? (
+          <ConversationEmpty>No messages yet.</ConversationEmpty>
+        ) : (
+          messages.map((message, index) => (
+            <Message key={`${message.role}-${index}`} from={message.role}>
+              <MessageContent from={message.role}>{message.content}</MessageContent>
+            </Message>
+          ))
+        )}
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      </ConversationContent>
+      <PromptInput
+        disabled={pending}
+        onSubmit={handleSubmit}
+        placeholder={placeholder ?? "Ask the agent…"}
+      />
+    </Conversation>
+  );
+}
+
+export default function AgentChat() {
+  const pathname = usePathname();
+
+  return (
     <Card className="flex h-full min-h-[280px] flex-col overflow-hidden">
       <CardHeader className="border-b py-3">
         <div className="flex items-center justify-between gap-2">
@@ -69,25 +97,7 @@ export default function AgentChat() {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-        <Conversation>
-          <ConversationContent>
-            {messages.length === 0 ? (
-              <ConversationEmpty>No messages yet.</ConversationEmpty>
-            ) : (
-              messages.map((message, index) => (
-                <Message key={`${message.role}-${index}`} from={message.role}>
-                  <MessageContent from={message.role}>
-                    {message.content}
-                  </MessageContent>
-                </Message>
-              ))
-            )}
-            {error ? (
-              <p className="text-sm text-destructive">{error}</p>
-            ) : null}
-          </ConversationContent>
-          <PromptInput disabled={pending} onSubmit={handleSubmit} />
-        </Conversation>
+        <AgentConversation />
       </CardContent>
     </Card>
   );
