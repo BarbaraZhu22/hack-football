@@ -107,12 +107,48 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             return;
         }
         if (cameraPreset === 'free') {
-            if (controls.current)
-                controls.current.enabled = true;
+            const orbit = controls.current;
+            if (orbit) {
+                orbit.enabled = true;
+                const target = orbit.target;
+                const minX = -33;
+                const maxX = 33;
+                const minZ = -51.5;
+                const maxZ = 51.5;
+                const targetInset = orbit.minDistance + 0.1;
+                target.x = THREE.MathUtils.clamp(target.x, minX + targetInset, maxX - targetInset);
+                target.z = THREE.MathUtils.clamp(target.z, minZ + targetInset, maxZ - targetInset);
+
+                const offsetX = camera.position.x - target.x;
+                const offsetZ = camera.position.z - target.z;
+                const horizontalDistance = Math.hypot(offsetX, offsetZ);
+                const radius = Math.max(camera.position.distanceTo(target), 1e-6);
+                const dirX = horizontalDistance > 1e-6 ? offsetX / horizontalDistance : 0;
+                const dirZ = horizontalDistance > 1e-6 ? offsetZ / horizontalDistance : 0;
+                let maxHorizontalDistance = Infinity;
+                if (dirX > 1e-6)
+                    maxHorizontalDistance = Math.min(maxHorizontalDistance, (maxX - target.x) / dirX);
+                else if (dirX < -1e-6)
+                    maxHorizontalDistance = Math.min(maxHorizontalDistance, (minX - target.x) / dirX);
+                if (dirZ > 1e-6)
+                    maxHorizontalDistance = Math.min(maxHorizontalDistance, (maxZ - target.z) / dirZ);
+                else if (dirZ < -1e-6)
+                    maxHorizontalDistance = Math.min(maxHorizontalDistance, (minZ - target.z) / dirZ);
+
+                const horizontalRatio = horizontalDistance / radius;
+                const fieldMaxDistance = horizontalRatio > 1e-6
+                    ? maxHorizontalDistance / horizontalRatio
+                    : 45;
+                orbit.maxDistance = Math.max(orbit.minDistance, Math.min(45, fieldMaxDistance));
+                if (radius > orbit.maxDistance + 1e-4)
+                    orbit.update();
+            }
         }
         else {
-            if (controls.current)
+            if (controls.current) {
                 controls.current.enabled = false;
+                controls.current.maxDistance = 45;
+            }
             if (isOffside && cameraPreset === 'broadcast') {
                 const frame = sampleOffsideFrame(sim, timeRef.current);
                 const focusX = (frame.receiver.x + frame.defender.x) / 2;
@@ -260,7 +296,7 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             _jsx(OffsideMotionOverlay, { sim: sim, timeRef: timeRef, ballStateRef: offsideBallRef, showTrajectory: showTrajectory, showForces: showForces }),
         ] })
         : _jsx(MotionOverlay, { sim: sim, timeRef: timeRef, showForces: showForces, showTrajectory: showTrajectory });
-    return (_jsxs(_Fragment, { children: [_jsx("fogExp2", { attach: "fog", args: ['#071413', 0.0062] }), _jsx("hemisphereLight", { args: ['#cfe7ff', '#0b2a1d', 0.92] }), _jsx("directionalLight", { position: [42, 34, 18], intensity: 3.0, color: "#fff3db", castShadow: true, "shadow-mapSize-width": 2048, "shadow-mapSize-height": 2048, "shadow-camera-left": -28, "shadow-camera-right": 28, "shadow-camera-top": 28, "shadow-camera-bottom": -28, "shadow-camera-near": 1, "shadow-camera-far": 90, "shadow-bias": -0.00025, "shadow-normalBias": 0.035 }), _jsx("directionalLight", { position: [-24, 18, -12], intensity: 1.15, color: "#5bb6ff" }), _jsx("directionalLight", { position: [18, 8, 30], intensity: 0.85, color: "#ffb66e" }), _jsx("spotLight", { position: [34, 22, 8], angle: 0.75, penumbra: 0.85, intensity: 100, color: "#e4f5ff", distance: 80 }), _jsx(Pitch, {}), actors, _jsx(Ball, { sim: sim, timeRef: timeRef, offsideBallRef: isOffside ? offsideBallRef : null }), markings, _jsx(OrbitControls, { ref: controls, makeDefault: true, enabled: cameraPreset === 'free', target: [27.35, 0.78, 10.25], enableDamping: true, dampingFactor: 0.06, minDistance: 2.5, maxDistance: 45, maxPolarAngle: Math.PI / 2 - 0.04 }), _jsx(Preload, { all: true })] }));
+    return (_jsxs(_Fragment, { children: [_jsx("fogExp2", { attach: "fog", args: ['#071413', 0.0062] }), _jsx("hemisphereLight", { args: ['#cfe7ff', '#0b2a1d', 0.92] }), _jsx("directionalLight", { position: [42, 34, 18], intensity: 3.0, color: "#fff3db", castShadow: true, "shadow-mapSize-width": 2048, "shadow-mapSize-height": 2048, "shadow-camera-left": -28, "shadow-camera-right": 28, "shadow-camera-top": 28, "shadow-camera-bottom": -28, "shadow-camera-near": 1, "shadow-camera-far": 90, "shadow-bias": -0.00025, "shadow-normalBias": 0.035 }), _jsx("directionalLight", { position: [-24, 18, -12], intensity: 1.15, color: "#5bb6ff" }), _jsx("directionalLight", { position: [18, 8, 30], intensity: 0.85, color: "#ffb66e" }), _jsx("spotLight", { position: [34, 22, 8], angle: 0.75, penumbra: 0.85, intensity: 100, color: "#e4f5ff", distance: 80 }), _jsx(Pitch, {}), actors, _jsx(Ball, { sim: sim, timeRef: timeRef, offsideBallRef: isOffside ? offsideBallRef : null }), markings, _jsx(OrbitControls, { ref: controls, makeDefault: true, enabled: cameraPreset === 'free', enablePan: false, target: [27.35, 0.78, 10.25], enableDamping: true, dampingFactor: 0.06, minDistance: 2.5, maxDistance: 45, maxPolarAngle: Math.PI / 2 - 0.04 }), _jsx(Preload, { all: true })] }));
 }
 export function Scene({ sim, timeRef, cameraPreset, showSkeleton, showLabels, showTrajectory, showForces, dual, contactView = false, onReady, }) {
     return (_jsx(Canvas, { shadows: "basic", dpr: [1, 2], gl: { antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false }, camera: { position: [19.9, 4.2, 7.2], fov: 40, near: 0.1, far: 360 }, onCreated: ({ gl }) => {

@@ -1,6 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { Stadium } from './Stadium';
 function seeded(seed) {
     let s = seed;
     return () => {
@@ -78,7 +79,7 @@ function makeGrassTexture() {
     // both ends
     for (const dir of [-1, 1]) {
         const goalZ = dir === -1 ? -52.5 : 52.5;
-        const sixteenZ = dir === -1 ? -52.5 : 35.0;
+        const sixteenZ = dir === -1 ? -52.5 : 36.0;
         const sixZ = dir === -1 ? -52.5 : 47.0;
         box(13.84, sixteenZ, 40.32, 16.5);
         box(24.84, sixZ, 18.32, 5.5);
@@ -92,9 +93,9 @@ function makeGrassTexture() {
         ctx.beginPath();
         ctx.rect(0, 0, W, H);
         if (dir === 1)
-            ctx.rect(mx(13.84), mz(46.5), 40.32 * ppmX, 6.5 * ppmZ);
+            ctx.rect(mx(13.84), mz(36.0), 40.32 * ppmX, 16.5 * ppmZ);
         else
-            ctx.rect(mx(13.84), 0, 40.32 * ppmX, mz(-46.5));
+            ctx.rect(mx(13.84), 0, 40.32 * ppmX, 16.5 * ppmZ);
         ctx.clip('evenodd');
         ctx.beginPath();
         ctx.ellipse(mx(34), mz(spotZ), 9.15 * ppmX, 9.15 * ppmZ, 0, 0, Math.PI * 2);
@@ -201,6 +202,51 @@ export function makeCrowdTexture() {
     tex.anisotropy = 4;
     return tex;
 }
+export function makeCrowdRowTexture() {
+    const W = 2048;
+    const H = 128;
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext('2d');
+    const rand = seeded(9451);
+    const palette = ['#e7edf0', '#397ca8', '#153e61', '#c53c44', '#d1b35d', '#8fb1c0', '#202f3c'];
+
+    // A transparent seated-crowd strip sized for the visible riser of each row.
+    for (let i = 0; i < 72; i++) {
+        const x = (i + 0.5) * W / 72 + (rand() - 0.5) * 9;
+        const baseY = 119 + rand() * 8;
+        const bodyColor = palette[Math.floor(rand() * palette.length)];
+        const skinColor = rand() > 0.5 ? '#c99472' : '#e0b08b';
+        const bodyWidth = 18 + rand() * 8;
+        const bodyHeight = 43 + rand() * 14;
+
+        ctx.globalAlpha = 0.82 + rand() * 0.18;
+        ctx.fillStyle = bodyColor;
+        ctx.beginPath();
+        ctx.moveTo(x - bodyWidth * 0.72, baseY - bodyHeight + 18);
+        ctx.quadraticCurveTo(x, baseY - bodyHeight - 2, x + bodyWidth * 0.72, baseY - bodyHeight + 18);
+        ctx.lineTo(x + bodyWidth * 0.58, baseY - 3);
+        ctx.lineTo(x - bodyWidth * 0.58, baseY - 3);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = skinColor;
+        ctx.beginPath();
+        ctx.arc(x + (rand() - 0.5) * 3, baseY - bodyHeight + 10, 7 + rand() * 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(7,13,18,0.34)';
+        ctx.fillRect(x - bodyWidth * 0.55, baseY - 2, bodyWidth * 1.1, 4);
+    }
+    ctx.globalAlpha = 1;
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = 8;
+    return tex;
+}
 function makeAdTexture() {
     const W = 2048;
     const H = 160;
@@ -296,25 +342,51 @@ function makeScreenTexture() {
 }
 function Goal({ z, dir }) {
     const posts = useMemo(() => {
-        const x0 = 34 - 3.66;
-        const x1 = 34 + 3.66;
+        const x0 = -3.66;
+        const x1 = 3.66;
         const h = 2.44;
         return { x0, x1, h };
     }, []);
     const mat = new THREE.MeshStandardMaterial({ color: '#edf7f1', roughness: 0.4, metalness: 0.25 });
-    return (_jsxs("group", { position: [0, 0, z], children: [[posts.x0, posts.x1].map((x) => (_jsx("mesh", { position: [x, posts.h / 2, 0], material: mat, castShadow: true, children: _jsx("cylinderGeometry", { args: [0.06, 0.06, posts.h, 10] }) }, x))), _jsx("mesh", { position: [34, posts.h, 0], rotation: [0, 0, Math.PI / 2], material: mat, castShadow: true, children: _jsx("cylinderGeometry", { args: [0.06, 0.06, 7.32, 10] }) }), _jsxs("mesh", { position: [34, 1.22, -dir * 0.9], rotation: [0, 0, 0], children: [_jsx("planeGeometry", { args: [7.2, 2.3] }), _jsx("meshBasicMaterial", { color: "#9eb9b2", transparent: true, opacity: 0.14, side: THREE.DoubleSide })] })] }));
+    return (_jsxs("group", { position: [0, 0, z], children: [[posts.x0, posts.x1].map((x) => (_jsx("mesh", { position: [x, posts.h / 2, 0], material: mat, castShadow: true, children: _jsx("cylinderGeometry", { args: [0.06, 0.06, posts.h, 10] }) }, x))), _jsx("mesh", { position: [0, posts.h, 0], rotation: [0, 0, Math.PI / 2], material: mat, castShadow: true, children: _jsx("cylinderGeometry", { args: [0.06, 0.06, 7.32, 10] }) }), _jsxs("mesh", { position: [0, 1.22, -dir * 0.9], rotation: [0, 0, 0], children: [_jsx("planeGeometry", { args: [7.2, 2.3] }), _jsx("meshBasicMaterial", { color: "#9eb9b2", transparent: true, opacity: 0.14, side: THREE.DoubleSide })] })] }));
 }
 export function Pitch() {
     const grass = useMemo(makeGrassTexture, []);
     const normal = useMemo(makeGrassNormal, []);
     const crowd = useMemo(makeCrowdTexture, []);
+    const crowdRows = useMemo(makeCrowdRowTexture, []);
     const ads = useMemo(makeAdTexture, []);
     const ribbon = useMemo(makeRibbonTexture, []);
     const screenTex = useMemo(makeScreenTexture, []);
-    return (_jsxs("group", { children: [_jsxs("mesh", { rotation: [-Math.PI / 2, 0, 0], receiveShadow: true, children: [_jsx("planeGeometry", { args: [68, 105] }), _jsx("meshStandardMaterial", { map: grass, normalMap: normal, normalScale: new THREE.Vector2(0.42, 0.42), roughness: 0.93, metalness: 0.0, color: "#d6e9d9" })] }), _jsxs("mesh", { rotation: [-Math.PI / 2, 0, 0], position: [0, -0.02, 0], receiveShadow: true, children: [_jsx("planeGeometry", { args: [92, 130] }), _jsx("meshStandardMaterial", { color: "#0b241a", roughness: 1 })] }), _jsx(Goal, { z: -52.3, dir: -1 }), _jsx(Goal, { z: 52.3, dir: 1 }), _jsxs("mesh", { position: [42.0, 0.42, 0], castShadow: true, receiveShadow: true, children: [_jsx("boxGeometry", { args: [0.18, 0.84, 66] }), _jsx("meshStandardMaterial", { color: "#10181b", roughness: 0.55, metalness: 0.2 })] }), _jsxs("mesh", { position: [41.88, 0.44, 0], rotation: [0, -Math.PI / 2, 0], children: [_jsx("planeGeometry", { args: [66, 0.78] }), _jsx("meshBasicMaterial", { map: ads, toneMapped: false })] }), _jsxs("mesh", { position: [-42.0, 0.42, 0], rotation: [0, Math.PI, 0], castShadow: true, receiveShadow: true, children: [_jsx("boxGeometry", { args: [0.18, 0.84, 66] }), _jsx("meshStandardMaterial", { color: "#10181b", roughness: 0.55, metalness: 0.2 })] }), [38.6, -38.6].map((x) => (_jsxs("mesh", { rotation: [-Math.PI / 2, 0, 0], position: [x, 0.005, 0], receiveShadow: true, children: [_jsx("planeGeometry", { args: [4.2, 72] }), _jsx("meshStandardMaterial", { color: "#0d3022", roughness: 1 })] }, x))), _jsxs("group", { position: [51, 0, 0], children: [_jsxs("mesh", { position: [0, 2.1, 0], receiveShadow: true, castShadow: true, children: [_jsx("boxGeometry", { args: [9, 4.2, 76] }), _jsx("meshStandardMaterial", { color: "#101c22", roughness: 0.92 })] }), _jsxs("mesh", { position: [0, 10.2, 0], rotation: [0, -Math.PI / 2, -0.12], receiveShadow: true, children: [_jsx("planeGeometry", { args: [74, 15] }), _jsx("meshStandardMaterial", { map: crowd, roughness: 1, color: "#9fb0b4" })] }), _jsxs("mesh", { position: [0, 10.2, 0], rotation: [0, -Math.PI / 2, -0.12], children: [_jsx("planeGeometry", { args: [74, 15] }), _jsx("meshBasicMaterial", { map: crowd, transparent: true, opacity: 0.54, toneMapped: false })] }), _jsxs("mesh", { position: [2.3, 18.4, 0], rotation: [0, 0, 0.06], castShadow: true, children: [_jsx("boxGeometry", { args: [15, 0.5, 78] }), _jsx("meshStandardMaterial", { color: "#0b1115", roughness: 0.7, metalness: 0.35 })] }), Array.from({ length: 9 }).map((_, i) => (_jsxs("mesh", { position: [1, 17.4, -32 + i * 8], rotation: [0, 0, 0.1], children: [_jsx("boxGeometry", { args: [12.5, 0.15, 0.16] }), _jsx("meshStandardMaterial", { color: "#29363d", metalness: 0.7, roughness: 0.4 })] }, i)))] }), _jsxs("mesh", { position: [42.6, 3.6, 0], rotation: [0, -Math.PI / 2, 0], receiveShadow: true, children: [_jsx("planeGeometry", { args: [76, 6.0] }), _jsx("meshBasicMaterial", { map: crowd, color: "#e2eeea" })] }), _jsxs("mesh", { position: [43.1, 7.2, 0], rotation: [0, -Math.PI / 2, -0.05], receiveShadow: true, children: [_jsx("planeGeometry", { args: [78, 7.5] }), _jsx("meshBasicMaterial", { map: crowd, color: "#c6d5d0" })] }), _jsxs("mesh", { position: [42.55, 1.45, 0], rotation: [0, -Math.PI / 2, 0], children: [_jsx("planeGeometry", { args: [72, 0.34] }), _jsx("meshBasicMaterial", { map: ribbon, toneMapped: false })] }), _jsxs("mesh", { position: [46.5, 1.65, 0], rotation: [0, -Math.PI / 2, 0], children: [_jsx("planeGeometry", { args: [78, 0.6] }), _jsx("meshBasicMaterial", { color: "#050d10" })] }), _jsxs("group", { position: [47.2, 5.1, 10], rotation: [0, -Math.PI / 2, 0], children: [_jsxs("mesh", { children: [_jsx("planeGeometry", { args: [7.2, 3.6] }), _jsx("meshBasicMaterial", { map: screenTex, toneMapped: false })] }), _jsxs("mesh", { position: [0, 0, -0.04], children: [_jsx("planeGeometry", { args: [7.7, 4.0] }), _jsx("meshBasicMaterial", { color: "#03090b" })] })] }), _jsxs("group", { position: [-44, 0, 0], children: [_jsxs("mesh", { position: [0, 6.2, 0], rotation: [0, Math.PI / 2, -0.1], receiveShadow: true, children: [_jsx("planeGeometry", { args: [92, 13] }), _jsx("meshStandardMaterial", { map: crowd, color: "#3e4d53", roughness: 1 })] }), _jsxs("mesh", { position: [-2, 12.5, 0], castShadow: true, children: [_jsx("boxGeometry", { args: [9, 0.4, 82] }), _jsx("meshStandardMaterial", { color: "#0b1115", roughness: 0.7, metalness: 0.35 })] })] }), [-61, 61].map((z) => (_jsx("group", { position: [0, 0, z], children: _jsxs("mesh", { position: [0, 5.2, 0], rotation: [0, 0, -0.08], receiveShadow: true, children: [_jsx("planeGeometry", { args: [64, 11] }), _jsx("meshStandardMaterial", { map: crowd, color: "#344349", roughness: 1 })] }) }, z))), [
-                [44, 22, -35],
-                [44, 22, 35],
-                [-40, 20, -38],
-                [-40, 20, 38],
-            ].map(([x, y, z], i) => (_jsxs("group", { position: [x, y, z], children: [_jsxs("mesh", { position: [0, y / 2, 0], children: [_jsx("cylinderGeometry", { args: [0.16, 0.24, y, 8] }), _jsx("meshStandardMaterial", { color: "#1d2a30", metalness: 0.7, roughness: 0.45 })] }), _jsxs("mesh", { position: [0, y / 2 + 1.2, 0], children: [_jsx("boxGeometry", { args: [4.6, 1.5, 0.4] }), _jsx("meshStandardMaterial", { color: "#102027", metalness: 0.6, roughness: 0.4 })] }), [-1.4, 0, 1.4].map((dx) => (_jsxs("mesh", { position: [dx, y / 2 + 1.2, 0.22], children: [_jsx("planeGeometry", { args: [0.75, 1.05] }), _jsx("meshBasicMaterial", { color: "#fff6db", toneMapped: false })] }, dx)))] }, i)))] }));
+    return _jsxs("group", {
+        children: [
+            _jsxs("mesh", {
+                rotation: [-Math.PI / 2, 0, 0],
+                receiveShadow: true,
+                children: [
+                    _jsx("planeGeometry", { args: [68, 105] }),
+                    _jsx("meshStandardMaterial", {
+                        map: grass,
+                        normalMap: normal,
+                        normalScale: new THREE.Vector2(0.42, 0.42),
+                        roughness: 0.93,
+                        metalness: 0.0,
+                        color: "#d6e9d9",
+                    }),
+                ],
+            }),
+            _jsxs("mesh", {
+                rotation: [-Math.PI / 2, 0, 0],
+                position: [0, -0.02, 0],
+                receiveShadow: true,
+                children: [
+                    _jsx("planeGeometry", { args: [184, 202] }),
+                    _jsx("meshStandardMaterial", { color: "#0b241a", roughness: 1 }),
+                ],
+            }),
+            _jsx(Goal, { z: -52.3, dir: -1 }),
+            _jsx(Goal, { z: 52.3, dir: 1 }),
+            _jsx(Stadium, { crowd, crowdRows, ads, ribbon, screenTex }),
+        ],
+    });
 }
