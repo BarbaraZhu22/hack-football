@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
-import { MATCH } from "@/lib/incident";
-import { MATCH_EVENTS, MATCH_PHASES, getIncident } from "@/lib/incidents";
+import { getIncident } from "@/lib/incidents";
 import {
   BallIcon,
   BootIcon,
@@ -16,16 +15,11 @@ import {
 
 const YELLOW = "#f5c518";
 const RED = "#e5484d";
+const EVENT_TYPES = new Set(["goal", "penalty-goal", "penalty-missed", "yellow", "red", "sub", "var"]);
 
-// Events and phase markers share one chronological axis, so the timeline
-// reads top-to-bottom exactly like a livescore feed.
-const ROWS = [
-  ...MATCH_EVENTS.map((event) => ({ kind: "event", minute: event.minute, event })),
-  ...MATCH_PHASES.map((phase) => ({ kind: "phase", minute: phase.minute, phase })),
-].sort((a, b) => a.minute - b.minute);
-
-function minuteLabel(minute) {
-  return minute > 90 ? `90+${minute - 90}` : String(minute);
+function minuteLabel(event) {
+  if (event.minuteLabel) return event.minuteLabel.replace(/:.*$/, "");
+  return event.minute > 90 ? `90+${event.minute - 90}` : String(event.minute);
 }
 
 function TeamChip({ team }) {
@@ -48,8 +42,8 @@ function Rail({ children }) {
   );
 }
 
-function EventRow({ event }) {
-  const team = event.team === "home" ? MATCH.home : MATCH.away;
+function EventRow({ event, match }) {
+  const team = event.team === "home" ? match.home : match.away;
   const incident = event.incidentId ? getIncident(event.incidentId) : null;
   const reconstructed = incident?.status === "active";
 
@@ -92,7 +86,7 @@ function EventRow({ event }) {
 
   const reviewLink = incident ? (
     <Link
-      href={`/pitch?incident=${incident.id}`}
+      href={"/pitch?incident=" + incident.id}
       className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-primary hover:underline"
     >
       {reconstructed ? "Open 3D review" : "Open review"}
@@ -103,7 +97,7 @@ function EventRow({ event }) {
   return (
     <div className="group relative flex gap-2">
       <div className="w-8 shrink-0 pt-[5px] text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-        {minuteLabel(event.minute)}&apos;
+        {minuteLabel(event)}&apos;
       </div>
       <Rail>
         <span className="relative z-10 mt-[6px] grid size-4 place-items-center rounded-full bg-card">
@@ -168,14 +162,14 @@ function Legend({ icon, label }) {
   );
 }
 
-export function EventTimelineLegend() {
-  const goals = MATCH_EVENTS.filter(
+export function EventTimelineLegend({ events = [] }) {
+  const goals = events.filter(
     (event) => event.type === "goal" || event.type === "penalty-goal",
   ).length;
-  const cards = MATCH_EVENTS.filter(
+  const cards = events.filter(
     (event) => event.type === "yellow" || event.type === "red",
   ).length;
-  const subs = MATCH_EVENTS.filter((event) => event.type === "sub").length;
+  const subs = events.filter((event) => event.type === "sub").length;
 
   return (
     <div className="shrink-0">
@@ -202,14 +196,20 @@ export function EventTimelineLegend() {
   );
 }
 
-export default function EventTimeline() {
+export default function EventTimeline({ events = [], phases = [], match }) {
+  const halfTime = phases.filter((phase) => phase.phase === "half_time");
+  const rows = [
+    ...events.filter((event) => EVENT_TYPES.has(event.type)).map((event) => ({ kind: "event", time: event.timeMilliseconds, event })),
+    ...halfTime.map((phase) => ({ kind: "phase", time: phase.timeMilliseconds, phase })),
+  ].sort((left, right) => left.time - right.time);
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {ROWS.map((row) =>
+      {rows.map((row) =>
         row.kind === "phase" ? (
-          <PhaseRow key={`phase-${row.phase.kind}`} phase={row.phase} />
+          <PhaseRow key={row.phase.id} phase={row.phase} />
         ) : (
-          <EventRow key={`${row.event.type}-${row.event.minute}`} event={row.event} />
+          <EventRow key={row.event.id} event={row.event} match={match} />
         ),
       )}
     </div>
