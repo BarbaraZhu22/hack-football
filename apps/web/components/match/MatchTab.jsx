@@ -312,8 +312,16 @@ export default function MatchTab() {
   useEffect(() => {
     let cancelled = false;
     fetchMatchStatus()
-      .then((body) => { if (!cancelled) setMatch(body); })
-      .catch((error) => { if (!cancelled) setServiceError(error instanceof Error ? error.message : "Service status unavailable"); });
+      .then((body) => {
+        if (cancelled) return;
+        console.log("[match] /api/match", body);
+        setMatch(body);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn("[match] /api/match failed", error);
+        setServiceError(error instanceof Error ? error.message : "Service status unavailable");
+      });
     return () => { cancelled = true; };
   }, []);
 

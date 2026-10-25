@@ -9,6 +9,7 @@ import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventT
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MATCH } from "@/lib/incident";
 import { getIncident, MATCH_DECISIONS, MATCH_EVENTS, RATINGS } from "@/lib/incidents";
+import { fetchMatchStatus } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 
 const AXIS_MINUTES = 95;
@@ -31,6 +32,22 @@ const CLOCK_START_SECONDS = 78 * 60 + 32;
 
 function useMatchClock() {
   const [seconds, setSeconds] = useState(CLOCK_START_SECONDS);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMatchStatus()
+      .then((body) => {
+        if (!cancelled) console.log("[match] /api/match", body);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("[match] /api/match failed", error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setSeconds((value) => value + 1), 1000);

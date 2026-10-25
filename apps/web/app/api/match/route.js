@@ -1,8 +1,9 @@
 const agentBase = () => process.env.AGENT_URL || "http://127.0.0.1:8088";
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const response = await fetch(`${agentBase()}/api/match`, {
+    const query = new URL(request.url).search;
+    const response = await fetch(`${agentBase()}/api/match${query}`, {
       cache: "no-store",
     });
 

@@ -14,7 +14,9 @@ export async function sendChatMessage({ messages, context }) {
 }
 
 export async function fetchMatchStatus() {
-  const response = await fetch("/api/match", { cache: "no-store" });
+  const response = await fetch("/api/match?half=1&t_ms=0&limit=1", {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(`Match status failed (${response.status})`);
   }
