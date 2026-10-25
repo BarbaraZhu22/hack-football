@@ -2,6 +2,7 @@
   "name": "football-web",
   "private": true,
   "scripts": {
+    "generate:match": "node scripts/generate-match.mjs",
     "dev": "next dev --hostname 0.0.0.0 --port 3000",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3000"
