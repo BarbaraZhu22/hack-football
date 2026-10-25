@@ -7,7 +7,7 @@ import { Scene } from "@/components/three/Scene";
 import ViewportChrome from "@/components/pitch/ViewportChrome";
 import { useScene } from "@/lib/scene/SceneProvider";
 
-export default function PitchCanvas({ sim, timeRef, onFreeze, viewportParts }) {
+export default function PitchCanvas({ sim, timeRef, time, onFreeze, viewportParts }) {
   const { state, run } = useScene();
   const previousLoaderSetting = useRef(viewportParts.loading);
   const [loaded, setLoaded] = useState(false);
@@ -59,7 +59,7 @@ export default function PitchCanvas({ sim, timeRef, onFreeze, viewportParts }) {
       </div>
       <ViewportChrome
         sim={sim}
-        time={state.incident.time}
+        time={time ?? state.incident.time}
         cameraPreset={state.camera.preset}
         onCamera={(preset) => {
           const option = {
@@ -87,7 +87,7 @@ export default function PitchCanvas({ sim, timeRef, onFreeze, viewportParts }) {
             </div>
             <span className={styles.eyebrow}>ARBITER RECONSTRUCTION ENGINE</span>
             <h2>Building the incident twin</h2>
-            <p>Loading rig · calibrating pitch · solving contact</p>
+            <p>{sim.kind === "offside" ? "Loading rig · calibrating pitch · timing pass" : "Loading rig · calibrating pitch · solving contact"}</p>
             <div className={styles.loadBar}><span style={{ width: `${progress}%` }} /></div>
             <div className={styles.loadRow}>
               <span>{progress < 100 ? "ASSEMBLING SCENE" : "READY"}</span>

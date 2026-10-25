@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,9 +31,10 @@ import {
 import { MATCH } from "@/lib/incident";
 import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
+import { buildOffsideSimulation } from "@/lib/offside-simulation";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { getBodyModelUrl, getClipUrl } from "@/components/three/actions/catalog";
-import { ContactEnvelope } from "@/components/pitch/ViewportChrome";
+import { ContactEnvelope, OffsideEnvelope } from "@/components/pitch/ViewportChrome";
 import Minimap from "@/components/pitch/ViewportMinimap";
 import viewportStyles from "@/components/pitch/ViewportChrome.module.css";
 
@@ -171,16 +172,23 @@ function timecode(time) {
 
 export default function PitchTab() {
   const { state, run } = useScene();
-  const simulation = useMemo(buildSimulation, []);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(0.5);
   const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
+  const [offsideTime, setOffsideTime] = useState(0);
   const [canWarmAssets, setCanWarmAssets] = useState(false);
+  const previousIncidentIdRef = useRef(incidentId);
   const searchParams = useSearchParams();
   const incident = INCIDENTS.find((item) => item.id === incidentId) ?? INCIDENTS[0];
   const incidentActive = incident.status === "active";
-  const timeRef = useRef(state.incident.time);
-  const time = state.incident.time;
+  const isOffside = incidentId === "offside";
+  const simulation = useMemo(
+    () => isOffside ? buildOffsideSimulation() : buildSimulation(),
+    [isOffside],
+  );
+  const time = isOffside ? offsideTime : state.incident.time;
+  const contactTime = isOffside ? simulation.contactT : state.incident.contactTime;
+  const timeRef = useRef(time);
   const activeEvent = simulation.events.reduce(
     (current, event) => (event.t <= time ? event : current),
     simulation.events[0],
@@ -193,8 +201,13 @@ export default function PitchTab() {
   }, []);
 
   const seek = useCallback((nextTime) => {
-    run([{ type: "incident.seek", time: nextTime }]);
-  }, [run]);
+    const boundedTime = Math.max(0, Math.min(simulation.duration, Number(nextTime) || 0));
+    if (isOffside) {
+      setOffsideTime(boundedTime);
+    } else {
+      run([{ type: "incident.seek", time: boundedTime }]);
+    }
+  }, [isOffside, run, simulation.duration]);
 
   const setCamera = useCallback((preset) => {
     const option = CAMERA_OPTIONS.find((item) => item.id === preset) ?? CAMERA_OPTIONS[0];
@@ -217,13 +230,21 @@ export default function PitchTab() {
     let request = 0;
     let last = performance.now();
     let elapsed = 0;
+    const frameInterval = isOffside ? 1 / 60 : 1 / 24;
     const advance = (now) => {
       const delta = Math.min(0.05, (now - last) / 1000);
       last = now;
       elapsed += delta;
-      if (elapsed >= 1 / 24) {
+      if (elapsed >= frameInterval) {
         let next = timeRef.current + elapsed * rate;
-        if (next >= simulation.duration) next = 0;
+        if (next >= simulation.duration) {
+          if (isOffside) {
+            next = simulation.duration;
+            setPlaying(false);
+          } else {
+            next = 0;
+          }
+        }
         timeRef.current = next;
         seek(next);
         elapsed = 0;
@@ -233,7 +254,7 @@ export default function PitchTab() {
 
     request = requestAnimationFrame(advance);
     return () => cancelAnimationFrame(request);
-  }, [playing, rate, seek, simulation.duration]);
+  }, [isOffside, playing, rate, seek, simulation.duration]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -241,6 +262,7 @@ export default function PitchTab() {
       if (target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       if (event.code === "Space") {
         event.preventDefault();
+        if (isOffside && !playing && timeRef.current >= simulation.duration) seek(0);
         setPlaying((value) => !value);
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -252,7 +274,7 @@ export default function PitchTab() {
         seek(timeRef.current + 1 / 60);
       } else if (event.key.toLowerCase() === "f") {
         setPlaying(false);
-        seek(state.incident.contactTime);
+        seek(contactTime);
       } else {
         const overlay = OVERLAYS.find((item) => item.shortcut.toLowerCase() === event.key.toLowerCase());
         if (overlay) toggleOverlay(overlay.key);
@@ -262,7 +284,7 @@ export default function PitchTab() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [seek, setCamera, state.incident.contactTime, toggleOverlay]);
+  }, [contactTime, isOffside, playing, seek, setCamera, simulation.duration, toggleOverlay]);
 
   // Deep link support: /pitch?incident=offside preselects that incident when
   // arriving from an overview event point.
@@ -272,6 +294,17 @@ export default function PitchTab() {
       setIncidentId(param);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    setPlaying(false);
+    if (incidentId === "offside") {
+      setOffsideTime(0);
+      setCamera("broadcast");
+    } else if (previousIncidentIdRef.current === "offside") {
+      setCamera("touchline");
+    }
+    previousIncidentIdRef.current = incidentId;
+  }, [incidentId, setCamera]);
 
   // Mount the WebGL viewports only after the page shell has settled and the
   // gltf assets are warm in the shared loader cache. Mounting the viewports
@@ -330,15 +363,20 @@ export default function PitchTab() {
   );
 
   function playIncident() {
-    seek(0.15);
+    seek(isOffside ? 0 : 0.15);
     setCamera("broadcast");
     setPlaying(true);
   }
 
   function freezeContact() {
-    seek(state.incident.contactTime);
-    setCamera("touchline");
+    seek(contactTime);
+    setCamera(isOffside ? "broadcast" : "touchline");
     setPlaying(false);
+  }
+
+  function togglePlayback() {
+    if (!playing && isOffside && time >= simulation.duration) seek(0);
+    setPlaying((value) => !value);
   }
 
   return (
@@ -369,7 +407,7 @@ export default function PitchTab() {
           <Card className="relative aspect-[2/1] min-h-[340px] shrink-0 overflow-hidden border-0 bg-transparent p-0 shadow-none">
             {viewportLive ? (
               <SceneSlot label="Incident view">
-                <PitchCanvas sim={simulation} timeRef={timeRef} onFreeze={freezeContact} viewportParts={STAGE_PARTS} />
+                <PitchCanvas sim={simulation} timeRef={timeRef} time={time} onFreeze={freezeContact} viewportParts={STAGE_PARTS} />
               </SceneSlot>
             ) : null}
           </Card>
@@ -379,9 +417,9 @@ export default function PitchTab() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button size="icon" variant="outline" aria-label="Restart incident" onClick={() => { setPlaying(false); seek(0); }}><RotateCcw className="size-4" /></Button>
                 <Button size="icon" variant="outline" aria-label="Step back one frame" onClick={() => { setPlaying(false); seek(time - 1 / 60); }}><span className="text-sm">−1</span></Button>
-                <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={() => setPlaying((value) => !value)}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
+                <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
                 <Button size="icon" variant="outline" aria-label="Step forward one frame" onClick={() => { setPlaying(false); seek(time + 1 / 60); }}><span className="text-sm">+1</span></Button>
-                <Button size="sm" variant="outline" onClick={freezeContact}><Snowflake className="mr-1 size-4" /> Freeze contact</Button>
+                <Button size="sm" variant="outline" onClick={freezeContact}><Snowflake className="mr-1 size-4" /> {isOffside ? "Freeze pass" : "Freeze contact"}</Button>
                 <span className="ml-1 font-mono text-sm tabular-nums">{timecode(time)}</span>
                 <span className="text-xs text-muted-foreground">of {timecode(simulation.duration)}</span>
                 <div className="ml-auto flex gap-1">
@@ -419,12 +457,14 @@ export default function PitchTab() {
         </div>
 
         <aside className="flex flex-col gap-3">
-          <ContactEnvelope sim={simulation} onFreeze={freezeContact} variant="panel" />
+          {isOffside
+            ? <OffsideEnvelope sim={simulation} onFreeze={freezeContact} variant="panel" />
+            : <ContactEnvelope sim={simulation} onFreeze={freezeContact} variant="panel" />}
 
           <div className={`${viewportStyles.insetFrame} ${viewportStyles.insetFramePanel}`}>
             <div className={viewportStyles.contactSceneLayer}>
               {contactMounted ? (
-                <SceneSlot label="Contact camera">
+                <SceneSlot label={isOffside ? "Pass camera" : "Contact camera"}>
                   <ContactCameraScene
                     sim={simulation}
                     timeRef={timeRef}
@@ -440,12 +480,12 @@ export default function PitchTab() {
               ) : null}
             </div>
             <div className={viewportStyles.insetHead}>
-              <span><i /> CONTACT CAM</span>
+              <span><i /> {isOffside ? "PASS CAM" : "CONTACT CAM"}</span>
               <span className={viewportStyles.recording}>REVERSE · SYNC</span>
             </div>
             <div className={viewportStyles.insetCorners}><i /><i /><i /><i /></div>
             <div className={viewportStyles.insetFoot}>
-              <span>REVERSE ANGLE · ACHILLES</span>
+              <span>{isOffside ? "REVERSE ANGLE · PASS RELEASE" : "REVERSE ANGLE · ACHILLES"}</span>
               <span>ANGLE 02 · CAL ±2.8 CM</span>
             </div>
             <div className={viewportStyles.insetCrosshair} />

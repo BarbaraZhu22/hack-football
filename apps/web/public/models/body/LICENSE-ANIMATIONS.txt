@@ -10,6 +10,8 @@ some assets were sourced during project setup. Football Desk does not ship
 animation clips from that library in this folder.
 
 Run locomotion in the app uses models/clips/run.glb (Adobe Mixamo export).
+The offside reconstruction uses the user-provided Mixamo Soccer Pass export at
+apps/web/public/models/clips/soccer-pass.fbx.
 Procedural tackle and carrier poses use code in components/three/actions/pose.js.
 
 Downloaded 2026-09-09 (universal_animation_librarystandard.zip). See README.md

@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { sampleFrame } from '@/lib/incident-simulation';
+import { sampleOffsideFrame } from '@/lib/offside-simulation';
 function makeBallTexture() {
     const W = 1024;
     const H = 512;
@@ -60,7 +61,7 @@ function makeBallTexture() {
     tex.anisotropy = 8;
     return tex;
 }
-export function Ball({ sim, timeRef, offset = [0, 0, 0] }) {
+export function Ball({ sim, timeRef, offset = [0, 0, 0], offsideBallRef }) {
     const mesh = useRef(null);
     const tex = useMemo(makeBallTexture, []);
     const mat = useMemo(() => new THREE.MeshStandardMaterial({
@@ -72,7 +73,15 @@ export function Ball({ sim, timeRef, offset = [0, 0, 0] }) {
     useFrame((_, delta) => {
         if (!mesh.current)
             return;
-        const f = sampleFrame(sim, timeRef.current);
+        if (sim.kind === 'offside' && offsideBallRef?.current) {
+            const state = offsideBallRef.current;
+            const position = state.position;
+            mesh.current.position.set(position.x + offset[0], position.y + offset[1], position.z + offset[2]);
+            return;
+        }
+        const f = sim.kind === 'offside'
+            ? sampleOffsideFrame(sim, timeRef.current)
+            : sampleFrame(sim, timeRef.current);
         const b = f.ball;
         mesh.current.position.set(b.p.x + offset[0], b.p.y + offset[1], b.p.z + offset[2]);
         const spin = new THREE.Quaternion().setFromEuler(new THREE.Euler(-b.v.z * delta * 1.8, b.v.x * delta * 0.35, b.v.x * delta * 1.15));

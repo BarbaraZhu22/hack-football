@@ -1,14 +1,64 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
+import AgentPanel from "@/components/overview/AgentPanel";
+import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventTimeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MATCH } from "@/lib/incident";
 import { getIncident, MATCH_DECISIONS, MATCH_EVENTS, RATINGS } from "@/lib/incidents";
+import { cn } from "@/lib/utils";
 
 const AXIS_MINUTES = 95;
 const HALFTIME = 45;
+
+// Left column: the decision timeline used to be 5fr against a 6fr stats panel.
+// It is now 4.25fr (= 0.85 x 5fr, i.e. 15% narrower) while the stats panel
+// keeps its 6fr, so its rendered width does not change. The 4fr column in the
+// middle is the new 3D playback / agent stack.
+const DESK_GRID = "xl:grid-cols-[minmax(0,4.25fr)_minmax(0,4fr)_minmax(0,6fr)]";
+
+const TIMELINE_TABS = [
+  { id: "decisions", label: "Decisions" },
+  { id: "events", label: "Events" },
+];
+
+// The match is in play at MATCH.clock; the desk runs it forward one second at
+// a time so the header clock and the commentary feed share the same source.
+const CLOCK_START_SECONDS = 78 * 60 + 32;
+
+function useMatchClock() {
+  const [seconds, setSeconds] = useState(CLOCK_START_SECONDS);
+
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const minute = Math.floor(seconds / 60);
+  const second = seconds % 60;
+  return {
+    minute,
+    second,
+    label: `${minute}:${String(second).padStart(2, "0")}`,
+  };
+}
+
+function LiveClock({ clock }) {
+  return (
+    <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1">
+      <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
+      <span className="font-mono text-sm font-bold tabular-nums tracking-tight text-red-600 dark:text-red-400">
+        {clock.label}
+      </span>
+      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-red-600/80 dark:text-red-400/80">
+        Live
+      </span>
+    </span>
+  );
+}
 
 const STAT_ROWS = [
   { label: "Possession", home: 58, away: 42, unit: "%" },
@@ -90,7 +140,8 @@ function DecisionRow({ decision }) {
   const rating = RATINGS[decision.rating];
   const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
   const reconstructed = incident?.status === "active";
-  const minuteLabel = decision.minuteLabel ?? `${decision.minute}'`;
+  // Every decision is stamped in minutes only, so the two timelines read alike.
+  const minuteLabel = `${decision.minute}'`;
 
   const body = (
     <div className="relative flex gap-2 py-0.5">
@@ -358,7 +409,54 @@ function LineupPitch() {
   );
 }
 
+function TabSwitch({ value, onChange, options }) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/50 p-0.5">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          onClick={() => onChange(option.id)}
+          aria-pressed={value === option.id}
+          className={cn(
+            "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+            value === option.id
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PlaybackFrame() {
+  return (
+    <Card className="shrink-0 overflow-hidden">
+      <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
+        <CardTitle className="text-sm">3D live playback</CardTitle>
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
+          Live
+        </span>
+      </CardHeader>
+      <CardContent className="py-2">
+        {/* Reserved for the real-time 3D playback surface - intentionally blank. */}
+        <div
+          className="aspect-video w-full rounded-lg border bg-muted/30"
+          aria-label="3D live playback window"
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function OverviewTab() {
+  const [timeline, setTimeline] = useState("decisions");
+  const clock = useMatchClock();
+
   const counts = MATCH_DECISIONS.reduce((acc, decision) => {
     acc[decision.rating] += 1;
     return acc;
@@ -380,37 +478,54 @@ export default function OverviewTab() {
             {MATCH.away.code}
             <span className="size-2.5 rounded-full" style={{ backgroundColor: MATCH.away.color }} />
           </span>
-          <span className="text-muted-foreground">{MATCH.clock} · {MATCH.stadium}</span>
+          <span className="text-muted-foreground">{MATCH.stadium}</span>
           <span className="text-muted-foreground">Att {MATCH.attendance}</span>
           <span className="text-muted-foreground">Incident {MATCH.incidentId}</span>
+          <LiveClock clock={clock} />
         </CardContent>
       </Card>
 
-      <div className="grid min-h-0 flex-1 items-stretch gap-3 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+      <div className={cn("grid min-h-0 flex-1 items-stretch gap-3", DESK_GRID)}>
         <Card className="flex h-full flex-col overflow-hidden">
-          <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 py-2">
-            <div>
-              <CardTitle className="text-sm">Decision timeline</CardTitle>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                <span className="font-medium" style={{ color: RATINGS.green.color }}>{counts.green} correct</span>
-                {" · "}
-                <span className="font-medium" style={{ color: RATINGS.amber.color }}>{counts.amber} questionable</span>
-                {" · "}
-                <span className="font-medium" style={{ color: RATINGS.red.color }}>{counts.red} controversial</span>
-                {" · "}
-                {MATCH_DECISIONS.length} decisions
-              </p>
-            </div>
+          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
+            <CardTitle className="text-sm">Timeline</CardTitle>
+            <TabSwitch value={timeline} onChange={setTimeline} options={TIMELINE_TABS} />
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col py-2">
-            <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
-              <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
-              {MATCH_DECISIONS.map((decision) => (
-                <DecisionRow key={decision.id} decision={decision} />
-              ))}
+            {timeline === "decisions" ? (
+              <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
+                <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
+                {MATCH_DECISIONS.map((decision) => (
+                  <DecisionRow key={decision.id} decision={decision} />
+                ))}
+              </div>
+            ) : (
+              <EventTimeline />
+            )}
+            <div className="shrink-0 border-t pt-2">
+              {timeline === "decisions" ? (
+                <p className="text-[11px] text-muted-foreground">
+                  <span className="font-medium" style={{ color: RATINGS.green.color }}>{counts.green} correct</span>
+                  {" · "}
+                  <span className="font-medium" style={{ color: RATINGS.amber.color }}>{counts.amber} questionable</span>
+                  {" · "}
+                  <span className="font-medium" style={{ color: RATINGS.red.color }}>{counts.red} controversial</span>
+                  {" · "}
+                  {MATCH_DECISIONS.length} decisions
+                </p>
+              ) : (
+                <EventTimelineLegend />
+              )}
             </div>
           </CardContent>
         </Card>
+
+        <div className="flex min-h-0 flex-col gap-3">
+          <PlaybackFrame />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <AgentPanel clock={clock} />
+          </div>
+        </div>
 
         <Card className="flex h-full flex-col overflow-hidden">
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">

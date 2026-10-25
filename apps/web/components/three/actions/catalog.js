@@ -4,6 +4,7 @@ export const BODY_MODEL_PATH = "/models/body/Superhero_Male_FullBody.gltf";
 
 export const ACTION_CATALOG = {
   run: { kind: "clip", url: "/models/clips/run.glb" },
+  soccerPass: { kind: "clip", url: "/models/clips/soccer-pass.fbx" },
   slide: { kind: "pose", pose: "slide" },
   carry: { kind: "pose", pose: "carry" },
 };
