@@ -85,7 +85,7 @@ export default function AgentChat() {
     <Card className="flex h-full min-h-[280px] flex-col overflow-hidden">
       <CardHeader className="border-b py-3">
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">Agent</CardTitle>
+          <CardTitle>Agent</CardTitle>
           <Badge variant="secondary">{tabFromPathname(pathname)}</Badge>
         </div>
       </CardHeader>

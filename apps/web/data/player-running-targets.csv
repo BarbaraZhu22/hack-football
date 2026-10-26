@@ -1,16 +1,16 @@
 person_id,team,shirt_number,player_name,position,active_minutes,distance_target_km_per_90,distance_target_km_for_match_minutes,generated_distance_km,generated_distance_at_78_32_km,generated_average_speed_mps,generated_peak_speed_mps,sprint_samples_over_25kmh,individual_match_reference_km,target_basis,source_url
-MCI-31,MCI,31,Ederson,GK,93.98,4.95,5.17,5.72,4.85,1.01,5.51,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
-MCI-2,MCI,2,Walker,RB,93.98,10.3,10.76,12.11,10.28,2.15,8.41,168,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-3,MCI,3,Dias,CB,93.98,9.83,10.27,10.5,8.9,1.86,8.41,90,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-25,MCI,25,Akanji,CB,93.98,9.83,10.27,11.03,9.4,1.96,8.41,127,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-24,MCI,24,Gvardiol,LB,93.98,10.41,10.87,12.2,10.3,2.16,8.41,187,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-17,MCI,17,De Bruyne,CM,93.98,11.07,11.56,14.18,12.12,2.51,8.41,592,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-16,MCI,16,Rodri,CDM,93.98,11.91,12.43,15.4,13.31,2.73,8.41,698,12.48,individual season distance divided by Premier League minutes,https://www.premierleague.com/en/news/4025765; https://theanalyst.com/players/4143/rodri/career
-MCI-19,MCI,19,Gundogan,CM,69.97,10.8,8.4,12.63,12.63,3.01,8.41,481,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-20,MCI,20,B. Silva,LW,93.98,11.25,11.74,12.37,10.44,2.19,8,67,12.3,position average blended with published individual match distance,https://theanalyst.com/articles/bernardo-silva-cannavaro-man-city-vs-arsenal-premier-league-title
-MCI-9,MCI,9,Haaland,ST,93.98,9.83,10.26,10.53,8.86,1.87,8.01,47,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-MCI-47,MCI,47,Foden,RW,93.98,11.27,11.76,11.28,9.51,2,8,72,12.45,position average blended with published individual match distance,https://www.premierleague.com/en/news/4025771
-MCI-8,MCI,8,Kovacic,CM,24,11.34,3.02,4.18,1.66,2.91,8.41,181,12.23,position average blended with published individual match distance,https://www.premierleague.com/en/news/4025771
+MCI-31,MCI,31,Ederson,GK,93.98,4.95,5.17,6.25,5.31,1.11,5.5,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
+MCI-2,MCI,2,Walker,RB,93.98,10.3,10.76,16.2,13,2.87,10.21,1493,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-3,MCI,3,Dias,CB,93.98,9.83,10.27,17.73,15.21,3.14,10.2,1512,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-25,MCI,25,Akanji,CB,93.98,9.83,10.27,17.29,14.5,3.07,10.2,1477,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-24,MCI,24,Gvardiol,LB,93.98,10.41,10.87,16.8,13.97,2.98,10.2,1521,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-17,MCI,17,De Bruyne,CM,93.98,11.07,11.56,17.18,12.99,3.05,10.31,1321,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-16,MCI,16,Rodri,CDM,93.98,11.91,12.43,22.39,18.49,3.97,10.24,2272,12.48,individual season distance divided by Premier League minutes,https://www.premierleague.com/en/news/4025765; https://theanalyst.com/players/4143/rodri/career
+MCI-19,MCI,19,Gundogan,CM,69.97,10.8,8.4,11.87,11.87,2.83,8.81,928,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-20,MCI,20,B. Silva,LW,93.98,11.25,11.74,16.74,13.29,2.97,10.2,1396,12.3,position average blended with published individual match distance,https://theanalyst.com/articles/bernardo-silva-cannavaro-man-city-vs-arsenal-premier-league-title
+MCI-9,MCI,9,Haaland,ST,93.98,9.83,10.26,16.16,14.87,2.86,9.06,1529,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+MCI-47,MCI,47,Foden,RW,93.98,11.27,11.76,16.76,12.89,2.97,10.2,1509,12.45,position average blended with published individual match distance,https://www.premierleague.com/en/news/4025771
+MCI-8,MCI,8,Kovacic,CM,24,11.34,3.02,5.57,1.45,3.87,10.3,423,12.23,position average blended with published individual match distance,https://www.premierleague.com/en/news/4025771
 MCI-33,MCI,33,Carson,GK,0,4.98,0,0,0,0,0,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
 MCI-5,MCI,5,Stones,CB,0,9.31,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
 MCI-6,MCI,6,Aké,CB,0,9.35,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
@@ -18,17 +18,17 @@ MCI-82,MCI,82,Lewis,FB,0,10.82,0,0,0,0,0,0,,position average with deterministic 
 MCI-21,MCI,21,Doku,W,0,10.58,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
 MCI-11,MCI,11,Jeremy,W,0,10.79,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
 MCI-52,MCI,52,Bob,MF,0,11.11,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-22,ARS,22,Raya,GK,93.98,4.97,5.19,5.32,4.49,0.94,5.51,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
-ARS-4,ARS,4,White,RB,93.98,10.76,11.24,13.02,10.89,2.31,8.41,232,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-2,ARS,2,Saliba,CB,93.98,9.8,10.24,12.15,10.16,2.15,8.41,152,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-6,ARS,6,Gabriel,CB,93.98,9.7,10.13,12.27,10.32,2.18,8.41,117,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-35,ARS,35,Zinchenko,LB,93.98,10.44,10.9,12.36,10.5,2.19,8.41,167,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-8,ARS,8,Odegaard,CM,93.98,11.64,12.15,14.92,12.56,2.65,8.41,587,,individual season distance divided by Premier League minutes,https://www.premierleague.com/en/news/4025765; https://theanalyst.com/players/3782/martin-odegaard/career
-ARS-41,ARS,41,Rice,CDM,93.98,11.36,11.86,15.23,12.94,2.7,8.41,726,,individual Premier League distance per 90,https://www.premierleague.com/en/news/3572110
-ARS-5,ARS,5,Partey,CM,93.98,10.48,10.94,15.09,12.83,2.68,8.41,492,,individual Premier League distance per 90,https://www.premierleague.com/en/news/3572110
-ARS-7,ARS,7,Saka,RW,93.98,11.23,11.72,10.69,9.02,1.9,7.91,53,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-9,ARS,9,Jesus,ST,93.98,10.17,10.62,13.05,10.99,2.31,8.01,35,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
-ARS-11,ARS,11,Martinelli,LW,93.98,10.89,11.37,11.85,9.99,2.1,8,55,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-22,ARS,22,Raya,GK,93.98,4.97,5.19,5.79,4.97,1.03,5.51,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
+ARS-4,ARS,4,White,RB,93.98,10.76,11.24,17.39,13.91,3.08,10.2,1639,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-2,ARS,2,Saliba,CB,93.98,9.8,10.24,17.45,14.97,3.1,10.2,1498,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-6,ARS,6,Gabriel,CB,93.98,9.7,10.13,17,14.33,3.02,10.2,1523,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-35,ARS,35,Zinchenko,LB,93.98,10.44,10.9,16.29,13.49,2.89,10.2,1518,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-8,ARS,8,Odegaard,CM,93.98,11.64,12.15,16.23,12.41,2.88,10.21,1267,,individual season distance divided by Premier League minutes,https://www.premierleague.com/en/news/4025765; https://theanalyst.com/players/3782/martin-odegaard/career
+ARS-41,ARS,41,Rice,CDM,93.98,11.36,11.86,22.79,18.68,4.04,10.21,2288,,individual Premier League distance per 90,https://www.premierleague.com/en/news/3572110
+ARS-5,ARS,5,Partey,CM,93.98,10.48,10.94,16.65,13.39,2.95,10.2,1348,,individual Premier League distance per 90,https://www.premierleague.com/en/news/3572110
+ARS-7,ARS,7,Saka,RW,93.98,11.23,11.72,16.53,13.14,2.93,10.22,1455,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-9,ARS,9,Jesus,ST,93.98,10.17,10.62,15.97,14.58,2.83,8.9,1494,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
+ARS-11,ARS,11,Martinelli,LW,93.98,10.89,11.37,16.32,12.75,2.89,10.21,1394,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
 ARS-1,ARS,1,Ramsdale,GK,0,5.25,0,0,0,0,0,0,,goalkeeper match-distance research average,https://doi.org/10.1080/02640414.2022.2044135
 ARS-15,ARS,15,Kiwior,CB,0,9.31,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/
 ARS-18,ARS,18,Tomiyasu,FB,0,10.33,0,0,0,0,0,0,,position average with deterministic individual variation,https://pmc.ncbi.nlm.nih.gov/articles/PMC11561100/

@@ -64,15 +64,6 @@ export default function ViewportChrome({
         </div>
       )}
 
-      {parts.status && (
-        <div className={styles.stageStatus}>
-          <span className={styles.statusLine}><i /> SYNTHETIC TRACK</span>
-          <span>100 FPS</span>
-          <span>±2.8 CM</span>
-          <span className={styles.engine}>WEBGL · IK RIG</span>
-        </div>
-      )}
-
       {parts.cameras && (
         <div className={styles.cameraDock}>
           <div className={styles.dockLabel}><Scan size={12} /> CAMERA</div>
@@ -84,12 +75,13 @@ export default function ViewportChrome({
                   key={camera.id}
                   className={cameraPreset === camera.id ? styles.on : ""}
                   onClick={() => onCamera(camera.id)}
-                  title={camera.label + " (" + camera.key + ")"}
+                  aria-label={`${camera.label} camera, shortcut ${camera.key}`}
                   aria-pressed={cameraPreset === camera.id}
                 >
                   <Icon size={13} />
                   <span>{camera.label}</span>
                   <kbd>{camera.key}</kbd>
+                  <span className={styles.buttonTooltip} aria-hidden="true">{camera.label} · {camera.key}</span>
                 </button>
               );
             })}
@@ -99,17 +91,17 @@ export default function ViewportChrome({
 
       {parts.overlays && (
         <div className={styles.overlayDock}>
-          <button className={overlays.skeleton ? styles.on : ""} onClick={() => onOverlay("skeleton")} aria-pressed={overlays.skeleton} title="Skeleton · S">
-            <Bone size={13} /> <span>Skeleton</span><kbd>S</kbd>
+          <button className={overlays.skeleton ? styles.on : ""} onClick={() => onOverlay("skeleton")} aria-pressed={overlays.skeleton} aria-label="Skeleton overlay, shortcut S">
+            <Bone size={13} /> <span>Skeleton</span><kbd>S</kbd><span className={styles.buttonTooltip} aria-hidden="true">Skeleton · S</span>
           </button>
-          <button className={overlays.trajectory ? styles.on : ""} onClick={() => onOverlay("trajectory")} aria-pressed={overlays.trajectory} title="Trails · T">
-            <Route size={13} /> <span>Trails</span><kbd>T</kbd>
+          <button className={overlays.trajectory ? styles.on : ""} onClick={() => onOverlay("trajectory")} aria-pressed={overlays.trajectory} aria-label="Trails overlay, shortcut T">
+            <Route size={13} /> <span>Trails</span><kbd>T</kbd><span className={styles.buttonTooltip} aria-hidden="true">Trails · T</span>
           </button>
-          <button className={overlays.forces ? styles.on : ""} onClick={() => onOverlay("forces")} aria-pressed={overlays.forces} title="Forces · K">
-            <Activity size={13} /> <span>Forces</span><kbd>K</kbd>
+          <button className={overlays.forces ? styles.on : ""} onClick={() => onOverlay("forces")} aria-pressed={overlays.forces} aria-label="Forces overlay, shortcut K">
+            <Activity size={13} /> <span>Forces</span><kbd>K</kbd><span className={styles.buttonTooltip} aria-hidden="true">Forces · K</span>
           </button>
-          <button className={overlays.labels ? styles.on : ""} onClick={() => onOverlay("labels")} aria-pressed={overlays.labels} title="Tags · L">
-            {overlays.labels ? <Eye size={13} /> : <EyeOff size={13} />} <span>Tags</span><kbd>L</kbd>
+          <button className={overlays.labels ? styles.on : ""} onClick={() => onOverlay("labels")} aria-pressed={overlays.labels} aria-label="Tags overlay, shortcut L">
+            {overlays.labels ? <Eye size={13} /> : <EyeOff size={13} />} <span>Tags</span><kbd>L</kbd><span className={styles.buttonTooltip} aria-hidden="true">Tags · L</span>
           </button>
         </div>
       )}

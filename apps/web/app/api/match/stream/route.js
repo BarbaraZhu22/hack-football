@@ -1,5 +1,5 @@
 import {
-  createMockMomentum,
+  deriveMomentum,
   decisionFromEvent,
   deriveStats,
   formatClock,
@@ -92,14 +92,14 @@ async function* localMatchStream(afterSeconds, delayMs, signal) {
       timelineEvents: nextEvents.filter(
         (event) =>
           event.type !== "phase" &&
-          event.timelineEvent &&
+          (event.timelineEvent || event.type === "sub") &&
           MAJOR_EVENT_TYPES.has(event.type),
       ),
       decisions: nextEvents
         .filter((event) => event.type !== "phase" && event.decision)
         .map(decisionFromEvent),
       stats: deriveStats(knownRows, knownFrames),
-      momentum: createMockMomentum(knownFrames),
+      momentum: deriveMomentum(knownRows, knownFrames),
     };
 
     yield (

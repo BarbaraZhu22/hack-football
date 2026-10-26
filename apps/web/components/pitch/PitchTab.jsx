@@ -5,6 +5,7 @@ import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState 
 import { useSearchParams } from "next/navigation";
 import { useLoader } from "@react-three/fiber";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import {
   Axis3D,
   Camera,
@@ -13,6 +14,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Scan,
   Snowflake,
   Target,
 } from "lucide-react";
@@ -36,41 +38,43 @@ import { useIncidentReview } from "@/lib/incident-review-context";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { getBodyModelUrl, getClipUrl } from "@/components/three/actions/catalog";
 import { ContactEnvelope, OffsideEnvelope } from "@/components/pitch/ViewportChrome";
-import Minimap from "@/components/pitch/ViewportMinimap";
 import IncidentTrackingFrame from "@/components/pitch/IncidentTrackingFrame";
 import viewportStyles from "@/components/pitch/ViewportChrome.module.css";
 
 const PitchCanvas = dynamic(() => import("@/components/three/PitchCanvas"), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full min-h-[340px] items-center justify-center rounded-lg border bg-muted/30 text-sm text-muted-foreground">
-      Loading incident reconstruction…
-    </div>
-  ),
+  loading: () => null,
 });
 const ContactCameraScene = dynamic(() => import("@/components/three/Scene").then((module) => module.Scene), {
   ssr: false,
-  loading: () => <div className="grid h-full place-items-center text-xs text-muted-foreground">Loading contact camera…</div>,
+  loading: () => null,
 });
 
-// Self-healing wrapper for the two WebGL viewports. A long dev session can
-// leave a dynamic import pointing at a stale chunk or an aborted asset fetch,
-// which surfaces as a permanently blank viewport. The boundary catches hard
-// errors, the watchdog remounts a viewport that never produced a live canvas,
-// and both retry a limited number of times before surfacing a message.
+// Self-healing wrapper for the two WebGL viewports. The watchdog waits for a
+// rendered frame, listens for context loss, and retries before surfacing an
+// actionable message.
 const SCENE_READY_TIMEOUT_MS = 4000;
 const SCENE_MAX_RETRIES = 3;
 
-// Populates the shared suspense cache for the two gltf assets. Effects in
-// this component only run once the loads have resolved, so onReady fires
-// exactly when the cache is warm.
-function AssetWarmup({ onReady }) {
-  useLoader(GLTFLoader, getBodyModelUrl());
-  useLoader(GLTFLoader, getClipUrl("run"));
+function WarmupReady({ onReady }) {
   useEffect(() => {
     onReady();
   }, [onReady]);
   return null;
+}
+
+function OffsideAssetWarmup({ onReady }) {
+  useLoader(FBXLoader, getClipUrl("soccerPass"));
+  return <WarmupReady onReady={onReady} />;
+}
+
+// Populate the shared suspense cache before mounting either WebGL canvas.
+function AssetWarmup({ incidentId, onReady }) {
+  useLoader(GLTFLoader, getBodyModelUrl());
+  useLoader(GLTFLoader, getClipUrl("run"));
+  return incidentId === "offside"
+    ? <OffsideAssetWarmup onReady={onReady} />
+    : <WarmupReady onReady={onReady} />;
 }
 
 class SceneErrorBoundary extends Component {
@@ -87,7 +91,7 @@ class SceneErrorBoundary extends Component {
     if (typeof console !== "undefined" && console.warn) {
       console.warn("Viewport boundary caught an error:", error);
     }
-    if (this.props.onCrash) this.props.onCrash();
+    if (this.props.onCrash) this.props.onCrash(error);
   }
 
   render() {
@@ -96,44 +100,108 @@ class SceneErrorBoundary extends Component {
   }
 }
 
-function SceneSlot({ label, children }) {
+function SceneSlot({ label, children, onReady, onFailure }) {
   const [attempt, setAttempt] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   const hostRef = useRef(null);
-  const exhausted = attempt >= SCENE_MAX_RETRIES;
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const host = hostRef.current;
-      const canvas = host ? host.querySelector("canvas") : null;
-      const live = canvas && canvas.width > 0 && canvas.height > 0;
-      if (!exhausted && !live) {
-        setAttempt((value) => value + 1);
-      }
-    }, SCENE_READY_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [attempt, exhausted]);
+  const retryTimerRef = useRef(null);
 
   const retry = useCallback(() => {
-    if (!exhausted) {
-      window.setTimeout(() => setAttempt((value) => value + 1), 400);
+    setReady(false);
+    if (onReady) onReady(false);
+    if (attempt >= SCENE_MAX_RETRIES) {
+      setFailed(true);
+      if (onFailure) onFailure(true);
+    } else {
+      if (onFailure) onFailure(false);
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        setAttempt((value) => value + 1);
+      }, 400);
     }
-  }, [exhausted]);
+  }, [attempt, onFailure, onReady]);
+
+  useEffect(() => () => window.clearTimeout(retryTimerRef.current), []);
+
+  const reportReady = useCallback(() => {
+    window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    setReady(true);
+    setFailed(false);
+    if (onReady) onReady(true);
+    if (onFailure) onFailure(false);
+  }, [onFailure, onReady]);
+
+  useEffect(() => {
+    if (ready || failed) return undefined;
+    const timer = window.setTimeout(() => {
+      retry();
+    }, SCENE_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [attempt, failed, ready, retry]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    const handleContextLost = (event) => {
+      event.preventDefault();
+      retry();
+    };
+    host.addEventListener("webglcontextlost", handleContextLost, true);
+    return () => host.removeEventListener("webglcontextlost", handleContextLost, true);
+  }, [attempt, retry]);
+
+  const retryManually = useCallback(() => {
+    setAttempt(0);
+    setReady(false);
+    setFailed(false);
+    if (onReady) onReady(false);
+    if (onFailure) onFailure(false);
+  }, [onFailure, onReady]);
 
   return (
-    <div ref={hostRef} className="h-full">
-      <SceneErrorBoundary
-        key={attempt}
-        onCrash={retry}
-        fallback={
-          <div className="grid h-full place-items-center rounded-lg border bg-muted/30 p-4 text-center text-xs text-muted-foreground">
-            {label} could not start.{exhausted ? " Reload the page to retry." : " Retrying…"}
+    <div ref={hostRef} className="relative h-full min-h-0">
+      {failed ? null : (
+        <SceneErrorBoundary key={attempt} onCrash={retry} fallback={null}>
+          {children({ onReady: reportReady, attempt })}
+        </SceneErrorBoundary>
+      )}
+      {failed ? (
+        <div className="absolute inset-0 z-20 grid place-items-center rounded-panel border bg-muted/30 p-4 text-center">
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{label} could not start.</p>
+            <Button size="sm" variant="outline" onClick={retryManually}>Try again</Button>
           </div>
-        }
-      >
-        {children}
-      </SceneErrorBoundary>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function IncidentLoadingOverlay({ isOffside, fading }) {
+  return (
+    <div className={`${viewportStyles.stageLoader} ${fading ? viewportStyles.stageLoaderDone : ""}`}>
+      <div className={viewportStyles.loadInner}>
+        <div className={viewportStyles.loadEmblem}>
+          <div className={`${viewportStyles.ring} ${viewportStyles.ringOne}`} />
+          <div className={`${viewportStyles.ring} ${viewportStyles.ringTwo}`} />
+          <div className={`${viewportStyles.ring} ${viewportStyles.ringThree}`} />
+          <Scan size={24} />
+        </div>
+        <span className={viewportStyles.eyebrow}>ARBITER RECONSTRUCTION ENGINE</span>
+        <h2>Building the incident twin</h2>
+        <p>{isOffside ? "Loading rig · calibrating pitch · timing pass" : "Loading rig · calibrating pitch · solving contact"}</p>
+      </div>
+    </div>
+  );
+}
+
+function clearIncidentAssetCache() {
+  useLoader.clear(GLTFLoader, getBodyModelUrl());
+  useLoader.clear(GLTFLoader, getClipUrl("run"));
+  useLoader.clear(FBXLoader, getClipUrl("soccerPass"));
 }
 
 const CAMERA_OPTIONS = [
@@ -153,7 +221,6 @@ const OVERLAYS = [
 
 const STAGE_PARTS = {
   identity: true,
-  status: true,
   cameras: true,
   overlays: true,
   contact: false,
@@ -163,7 +230,6 @@ const STAGE_PARTS = {
   vignette: true,
   grain: true,
   footer: true,
-  loading: true,
 };
 
 function timecode(time) {
@@ -180,11 +246,17 @@ export default function PitchTab() {
   const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
   const [offsideTime, setOffsideTime] = useState(0);
   const [canWarmAssets, setCanWarmAssets] = useState(false);
+  const [assetState, setAssetState] = useState({ incidentId: null, status: "idle", attempt: 0, error: null });
+  const assetAttemptsRef = useRef(new Map());
   const previousIncidentIdRef = useRef(incidentId);
   const searchParams = useSearchParams();
   const incident = INCIDENTS.find((item) => item.id === incidentId) ?? INCIDENTS[0];
   const incidentActive = incident.status === "active";
   const isOffside = incidentId === "offside";
+  const currentAssetState = assetState.incidentId === incidentId ? assetState : null;
+  const assetsReady = currentAssetState?.status === "ready";
+  const assetsFailed = currentAssetState?.status === "error";
+  const warmupAttempt = currentAssetState?.attempt ?? 0;
   const simulation = useMemo(
     () => isOffside ? buildOffsideSimulation() : buildSimulation(),
     [isOffside],
@@ -211,6 +283,28 @@ export default function PitchTab() {
   useEffect(() => {
     setCanWarmAssets(true);
   }, []);
+
+  const handleAssetsReady = useCallback(() => {
+    assetAttemptsRef.current.delete(incidentId);
+    setAssetState({ incidentId, status: "ready", attempt: 0, error: null });
+  }, [incidentId]);
+
+  const handleAssetsCrash = useCallback((error) => {
+    const attempts = (assetAttemptsRef.current.get(incidentId) ?? 0) + 1;
+    assetAttemptsRef.current.set(incidentId, attempts);
+    if (attempts <= SCENE_MAX_RETRIES) {
+      clearIncidentAssetCache();
+      setAssetState({ incidentId, status: "loading", attempt: attempts, error: null });
+      return;
+    }
+    setAssetState({ incidentId, status: "error", attempt: attempts, error });
+  }, [incidentId]);
+
+  const retryAssetWarmup = useCallback(() => {
+    clearIncidentAssetCache();
+    assetAttemptsRef.current.delete(incidentId);
+    setAssetState({ incidentId, status: "loading", attempt: 0, error: null });
+  }, [incidentId]);
 
   const seek = useCallback((nextTime) => {
     const boundedTime = Math.max(0, Math.min(simulation.duration, Number(nextTime) || 0));
@@ -318,34 +412,49 @@ export default function PitchTab() {
     previousIncidentIdRef.current = incidentId;
   }, [incidentId, setCamera]);
 
-  // Mount the WebGL viewports only after the page shell has settled and the
-  // gltf assets are warm in the shared loader cache. Mounting the viewports
-  // while the assets are still cold - which is what a direct load or refresh
-  // does - leaves the actor rigs in a broken state. Warming the cache first
-  // routes every entry point through the same reliable path that switching
-  // incidents already uses.
+  // Mount the WebGL viewports only after the page shell and every asset for
+  // the selected incident are ready. This includes the pass clip used only
+  // by the offside reconstruction.
   const [shellReady, setShellReady] = useState(false);
-  const [assetsReady, setAssetsReady] = useState(false);
-  const handleAssetsReady = useCallback(() => setAssetsReady(true), []);
   useEffect(() => {
     const timer = window.setTimeout(() => setShellReady(true), 300);
     return () => window.clearTimeout(timer);
   }, []);
 
-  // The contact camera mounts shortly after the main viewport instead of in
-  // the same commit. Creating both WebGL contexts simultaneously is flaky at
-  // load time (one of the two silently fails); staggering them reproduces the
-  // reliable sequential path that users observe when switching incidents.
+  const [mainSceneReadyId, setMainSceneReadyId] = useState(null);
+  const [contactSceneReadyId, setContactSceneReadyId] = useState(null);
+  const [mainSceneFailedId, setMainSceneFailedId] = useState(null);
+  const [contactSceneFailedId, setContactSceneFailedId] = useState(null);
+  const handleMainSceneReady = useCallback((ready) => {
+    setMainSceneReadyId(ready ? incidentId : null);
+    if (!ready) setContactSceneReadyId(null);
+  }, [incidentId]);
+  const handleContactSceneReady = useCallback((ready) => {
+    setContactSceneReadyId(ready ? incidentId : null);
+  }, [incidentId]);
+  const handleMainSceneFailure = useCallback((failed) => {
+    setMainSceneFailedId(failed ? incidentId : null);
+  }, [incidentId]);
+  const handleContactSceneFailure = useCallback((failed) => {
+    setContactSceneFailedId(failed ? incidentId : null);
+  }, [incidentId]);
   const viewportLive = incidentActive && shellReady && assetsReady;
-  const [contactMounted, setContactMounted] = useState(false);
+  const contactMounted = viewportLive && mainSceneReadyId === incidentId;
+  const sceneFailed = mainSceneFailedId === incidentId || contactSceneFailedId === incidentId;
+  const sceneStarting = incidentActive && !assetsFailed && !sceneFailed && (
+    !canWarmAssets || !assetsReady || !shellReady ||
+    mainSceneReadyId !== incidentId ||
+    (contactMounted && contactSceneReadyId !== incidentId)
+  );
+  const [startupOverlayHidden, setStartupOverlayHidden] = useState(false);
   useEffect(() => {
-    if (!viewportLive) {
-      setContactMounted(false);
+    if (sceneStarting) {
+      setStartupOverlayHidden(false);
       return undefined;
     }
-    const timer = window.setTimeout(() => setContactMounted(true), 350);
+    const timer = window.setTimeout(() => setStartupOverlayHidden(true), 450);
     return () => window.clearTimeout(timer);
-  }, [viewportLive]);
+  }, [incidentId, sceneStarting]);
 
   const incidentSwitcher = (
     <DropdownMenu>
@@ -365,7 +474,7 @@ export default function PitchTab() {
               <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS[item.rating].color }} />
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
               {item.status === "active" ? null : (
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Soon</span>
+                <span className="desk-type-meta uppercase tracking-wider text-muted-foreground">Soon</span>
               )}
             </DropdownMenuRadioItem>
           ))}
@@ -392,8 +501,8 @@ export default function PitchTab() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {incidentSwitcher}
           <span className="truncate text-xs uppercase tracking-[0.12em] text-muted-foreground">{MATCH.competition} · {MATCH.round}</span>
@@ -410,20 +519,47 @@ export default function PitchTab() {
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_255px]">
-        {canWarmAssets && incidentActive ? (
-          <SceneErrorBoundary onCrash={handleAssetsReady} fallback={null}>
+        {canWarmAssets && incidentActive && !assetsFailed ? (
+          <SceneErrorBoundary
+            key={`${incidentId}:${warmupAttempt}`}
+            onCrash={handleAssetsCrash}
+            fallback={null}
+          >
             <Suspense fallback={null}>
-              <AssetWarmup onReady={handleAssetsReady} />
+              <AssetWarmup incidentId={incidentId} onReady={handleAssetsReady} />
             </Suspense>
           </SceneErrorBoundary>
         ) : null}
 
         <div className="flex h-full min-h-0 flex-col gap-3">
           <Card className="relative min-h-[340px] min-w-0 flex-1 overflow-hidden border-0 bg-transparent p-0 shadow-none">
-            {viewportLive ? (
-              <SceneSlot label="Incident view">
-                <PitchCanvas sim={simulation} timeRef={timeRef} time={time} viewportParts={STAGE_PARTS} />
+            {assetsFailed ? (
+              <div className="grid h-full min-h-[340px] place-items-center rounded-panel border bg-muted/30 p-4 text-center">
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">Incident models could not be loaded.</p>
+                  <Button size="sm" variant="outline" onClick={retryAssetWarmup}>Retry loading</Button>
+                </div>
+              </div>
+            ) : viewportLive ? (
+              <SceneSlot
+                label="Incident view"
+                onReady={handleMainSceneReady}
+                onFailure={handleMainSceneFailure}
+              >
+                {({ onReady, attempt }) => (
+                  <PitchCanvas
+                    key={attempt}
+                    sim={simulation}
+                    timeRef={timeRef}
+                    time={time}
+                    viewportParts={STAGE_PARTS}
+                    onReady={onReady}
+                  />
+                )}
               </SceneSlot>
+            ) : null}
+            {incidentActive && (sceneStarting || !startupOverlayHidden) ? (
+              <IncidentLoadingOverlay isOffside={isOffside} fading={!sceneStarting} />
             ) : null}
           </Card>
 
@@ -434,7 +570,7 @@ export default function PitchTab() {
                 <Button size="icon" variant="outline" aria-label="Step back one frame" onClick={() => { setPlaying(false); seek(time - 1 / 60); }}><span className="text-sm">−1</span></Button>
                 <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
                 <Button size="icon" variant="outline" aria-label="Step forward one frame" onClick={() => { setPlaying(false); seek(time + 1 / 60); }}><span className="text-sm">+1</span></Button>
-                <span className="ml-1 font-mono text-sm tabular-nums">{timecode(time)}</span>
+                <span className="ml-1 text-sm tabular-nums">{timecode(time)}</span>
                 <span className="text-xs text-muted-foreground">of {timecode(simulation.duration)}</span>
                 <div className="ml-auto flex gap-1">
                   {[0.25, 0.5, 1].map((speed) => (
@@ -461,7 +597,7 @@ export default function PitchTab() {
                     className={`rounded-md border px-2 py-1 text-xs transition ${activeEvent.id === event.id ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                   >
                     <span className="font-medium">{event.short}</span>
-                    <span className="ml-1.5 font-mono text-[10px] opacity-70">{event.t.toFixed(2)}s</span>
+                    <span className="ml-1.5 desk-type-meta opacity-70">{event.t.toFixed(2)}s</span>
                   </button>
                 ))}
               </div>
@@ -470,7 +606,7 @@ export default function PitchTab() {
           </Card>
         </div>
 
-        <aside className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto">
+        <aside className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
           {isOffside
             ? <OffsideEnvelope sim={simulation} variant="panel" />
             : <ContactEnvelope sim={simulation} variant="panel" />}
@@ -478,18 +614,26 @@ export default function PitchTab() {
           <div className={`${viewportStyles.insetFrame} ${viewportStyles.insetFramePanel}`}>
             <div className={viewportStyles.contactSceneLayer}>
               {contactMounted ? (
-                <SceneSlot label={isOffside ? "Pass camera" : "Contact camera"}>
-                  <ContactCameraScene
-                    sim={simulation}
-                    timeRef={timeRef}
-                    cameraPreset={state.camera.preset}
-                    showSkeleton={state.overlays.skeleton}
-                    showLabels={state.overlays.labels}
-                    showTrajectory={state.overlays.trajectory}
-                    showForces={state.overlays.forces}
-                    dual={false}
-                    contactView
-                  />
+                <SceneSlot
+                  label={isOffside ? "Pass camera" : "Contact camera"}
+                  onReady={handleContactSceneReady}
+                  onFailure={handleContactSceneFailure}
+                >
+                  {({ onReady, attempt }) => (
+                    <ContactCameraScene
+                      key={attempt}
+                      sim={simulation}
+                      timeRef={timeRef}
+                      cameraPreset={state.camera.preset}
+                      showSkeleton={state.overlays.skeleton}
+                      showLabels={state.overlays.labels}
+                      showTrajectory={state.overlays.trajectory}
+                      showForces={state.overlays.forces}
+                      dual={false}
+                      contactView
+                      onReady={onReady}
+                    />
+                  )}
                 </SceneSlot>
               ) : null}
             </div>
@@ -505,7 +649,6 @@ export default function PitchTab() {
             <div className={viewportStyles.insetCrosshair} />
           </div>
 
-          <Minimap sim={simulation} time={time} preset={state.camera.preset} variant="panel" />
           <IncidentTrackingFrame incident={incident} simulation={simulation} time={time} />
         </aside>
       </div>

@@ -224,7 +224,6 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
     anchorsBySecond.set(event.match_second, rows);
   }
   for (const rows of anchorsBySecond.values()) rows.sort((left, right) => left.sequence - right.sequence);
-
   const state = { team: home, holder: playerId(home, 16), stopped: false, passes: 0, possessionStartSecond: 0 };
   let nextActionSecond = 5;
   const activeOutfield = (team, second) => activePlayers(people, team, second, home, half1Seconds)
@@ -251,6 +250,8 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
     const from = currentPlayer ? positionOf(state.holder, second) : positionOf(expectedId, second);
     const to = positionOf(expectedId, second);
     const sameTeam = state.team === expectedTeam;
+    const separation = Math.hypot(to.x - from.x, to.y - from.y);
+    if ((!sameTeam && separation > 8.5) || (sameTeam && separation > 17.5)) return null;
     const row = add({
       period,
       periodSecond,
@@ -286,6 +287,22 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
     if (event.event_type === "duel" || event.event_type === "aerial_duel") return "";
     return "";
   };
+  const prealignments = new Map();
+  for (const [anchorSecond, rows] of anchorsBySecond) {
+    const expected = rows.find((event) => anchorController(event)
+      && !String(event.chain_id || "").startsWith("incident-"));
+    if (!expected) continue;
+    for (let delay = 5; delay <= 9; delay += 1) {
+      const linkSecond = anchorSecond - delay;
+      const clearWindow = Array.from({ length: delay - 1 }, (_, index) => linkSecond + index + 1)
+        .every((second) => !anchorsBySecond.has(second));
+      if (linkSecond >= 0 && !anchorsBySecond.has(linkSecond) && clearWindow) {
+        prealignments.set(linkSecond, { event: expected, anchorSecond });
+        for (let reserved = linkSecond; reserved < anchorSecond; reserved += 1) reservedTimes.add(reserved);
+        break;
+      }
+    }
+  }
   const applyAnchor = (event) => {
     if (event.event_type === "phase") {
       if (["half_time", "full_time"].includes(event.phase)) setHolder("");
@@ -324,19 +341,51 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
     const period = periodForMatchSecond(second, half1Seconds);
     const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
     const from = positionOf(state.holder, second);
-    const nearbyTeammates = activeTeammates
-      .map((person) => ({ person, position: positionOf(playerId(person.team, person.no), second) }))
-      .sort((left, right) => Math.hypot(left.position.x - from.x, left.position.y - from.y)
-        - Math.hypot(right.position.x - from.x, right.position.y - from.y));
+    const attackDirection = state.team === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+    const teammateOptions = activeTeammates.map((person) => {
+      const position = positionOf(playerId(person.team, person.no), second);
+      const distanceToReceiver = Math.hypot(position.x - from.x, position.y - from.y);
+      const forwardProgress = (position.x - from.x) * attackDirection;
+      const nearestDefenderGap = Math.min(...activeOpponents.map((opponentPlayer) => {
+        const opponentPosition = positionOf(playerId(opponentPlayer.team, opponentPlayer.no), second);
+        return Math.hypot(position.x - opponentPosition.x, position.y - opponentPosition.y);
+      }));
+      const roleBonus = ({ ST: 5.5, LW: 3.5, RW: 3.5, W: 3, CM: 1, CDM: 0.5 })[person.pos] ?? -0.5;
+      return { person, position, distanceToReceiver, forwardProgress, nearestDefenderGap, roleBonus };
+    });
     const nearestOpponents = activeOpponents
       .map((person) => ({ person, position: positionOf(playerId(person.team, person.no), second) }))
       .sort((left, right) => Math.hypot(left.position.x - from.x, left.position.y - from.y)
         - Math.hypot(right.position.x - from.x, right.position.y - from.y));
+    const nearbyPressers = nearestOpponents.filter(({ person }) => !["ST", "LW", "RW", "W"].includes(person.pos));
     const seed = stableHash(`${second}-${state.holder}-open-play`);
     const possessionAge = second - state.possessionStartSecond;
-    const shouldRecover = state.passes >= 3 && (seed % 100 < 38 || possessionAge > 28);
-    if (shouldRecover && nearestOpponents.length) {
-      const tackler = nearestOpponents[0].person;
+    const nearestOpponentGap = nearestOpponents.length
+      ? Math.hypot(nearestOpponents[0].position.x - from.x, nearestOpponents[0].position.y - from.y)
+      : Number.POSITIVE_INFINITY;
+    const pressured = nearestOpponentGap < 8.5;
+    const forwardOptions = teammateOptions.filter((option) => option.forwardProgress >= 2 && option.distanceToReceiver <= 48)
+      .sort((left, right) => {
+        const score = (option) => option.forwardProgress * 0.55 - option.distanceToReceiver * 0.14
+          + option.roleBonus + Math.min(option.nearestDefenderGap, 18) * (pressured ? 0.16 : 0.08);
+        return score(right) - score(left);
+      });
+    const lateralOptions = teammateOptions.filter((option) => option.forwardProgress >= -2 && option.forwardProgress < 2)
+      .sort((left, right) => right.nearestDefenderGap - left.nearestDefenderGap
+        || left.distanceToReceiver - right.distanceToReceiver);
+    const switchOptions = teammateOptions.filter((option) => option.forwardProgress >= 0 && option.distanceToReceiver <= 58)
+      .sort((left, right) => (right.forwardProgress * 0.48 - right.distanceToReceiver * 0.09 + right.roleBonus)
+        - (left.forwardProgress * 0.48 - left.distanceToReceiver * 0.09 + left.roleBonus));
+    const safeBackwardOptions = teammateOptions.filter((option) => option.forwardProgress >= -14 && option.distanceToReceiver <= 18)
+      .sort((left, right) => right.nearestDefenderGap - left.nearestDefenderGap
+        || left.distanceToReceiver - right.distanceToReceiver);
+    const closestPressingGap = nearbyPressers.length
+      ? Math.hypot(nearbyPressers[0].position.x - from.x, nearbyPressers[0].position.y - from.y)
+      : Number.POSITIVE_INFINITY;
+    const shouldRecover = pressured && closestPressingGap < 7.5 && state.passes >= 2
+      && (seed % 100 < 28 || possessionAge > 24 && seed % 100 < 58);
+    if (shouldRecover && nearbyPressers.length) {
+      const tackler = nearbyPressers[0].person;
       const tacklerId = playerId(opponent, tackler.no);
       const recovery = add({
         period, periodSecond, eventType: "ball_recovery", action: "tackle_recovery", outcome: "won",
@@ -352,24 +401,82 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
       nextActionSecond = second + 3 + seed % 4;
       return recovery;
     }
-    const carry = seed % 100 < 29;
+    const goalX = attackDirection * 52.5;
+    const shotDistance = Math.hypot(goalX - from.x, from.y);
+    const shootingRange = current.pos === "ST" && from.x * attackDirection >= 30
+      && Math.abs(from.y) <= 20 && shotDistance <= 28;
+    const shotChance = shotDistance < 12 ? 28 : shotDistance < 18 ? 16 : 7;
+    const noForwardRoute = !forwardOptions.length && !lateralOptions.length;
+    const buildupReady = state.passes >= 1 || possessionAge >= 10 || (shotDistance <= 14 && noForwardRoute);
+    const keeper = people.find((person) => person.team === opponent && person.pos === "GK");
+    const shotFlightSeconds = Math.max(1, Math.ceil(shotDistance / 18));
+    const saveSecond = second + shotFlightSeconds;
+    const savePeriod = periodForMatchSecond(saveSecond, half1Seconds);
+    const canResolveShot = saveSecond < duration && savePeriod === period
+      && !reservedTimes.has(saveSecond);
+    const closeRangeFinish = shotDistance <= 9 && (state.passes >= 1 || possessionAge >= 8);
+    if (shootingRange && buildupReady && possessionAge >= 5 && canResolveShot
+      && (closeRangeFinish || seed % 100 < shotChance)) {
+      const keeperId = playerId(opponent, keeper.no);
+      const chainId = `open-shot-${second}`;
+      const shot = add({
+        period, periodSecond, eventType: "shot", action: "striker_shot",
+        outcome: "saved", teamCode: state.team, playerId: state.holder,
+        goalkeeperId: keeperId, participantIds: [state.holder, keeperId], chainId,
+        isShot: true, shotOnTarget: true,
+        xg: round2(clamp(0.34 - shotDistance * 0.009 - Math.abs(from.y) * 0.0015, 0.04, 0.28)),
+        detail: `${current.name} receives in the attacking third and shoots on target; the goalkeeper saves.`,
+        x: from.x, y: from.y, targetX: goalX, targetY: 0,
+        possessionAfterPlayerId: keeperId, possessionAfterTeamCode: opponent,
+      });
+      add({
+        period: savePeriod, periodSecond: periodSecondForMatchSecond(saveSecond, savePeriod, half1Seconds),
+        eventType: "save", action: "goalkeeper_save", outcome: "shot_saved",
+        teamCode: opponent, playerId: keeperId, relatedPlayerId: state.holder,
+        participantIds: [keeperId, state.holder], chainId, parentEventId: shot.event_id,
+        countsAsSave: true, detail: `${keeper.name} gathers ${current.name}'s shot.`,
+        possessionAfterPlayerId: keeperId, possessionAfterTeamCode: opponent,
+      });
+      reservedTimes.add(saveSecond);
+      setHolder(keeperId);
+      state.passes = 0;
+      state.possessionStartSecond = saveSecond;
+      nextActionSecond = saveSecond + 2;
+      return shot;
+    }
+    const carryChance = current.pos === "GK" ? 0 : pressured ? 12 : 18;
+    const carry = seed % 100 < carryChance;
     if (carry) {
       const carryEvent = add({
-        period, periodSecond, eventType: "carry", action: seed % 2 ? "progressive_carry" : "retain_possession",
-        outcome: seed % 2 ? "progressed" : "retained", teamCode: state.team,
+        period, periodSecond, eventType: "carry", action: pressured ? "shield_and_drive_forward" : "progressive_carry",
+        outcome: "progressed", teamCode: state.team,
         playerId: state.holder, participantIds: [state.holder], chainId: `carry-${second}`,
-        detail: seed % 2 ? `${current.name} carries the ball forward under pressure.` : `${current.name} shields the ball and keeps possession.`,
+        detail: pressured
+          ? `${current.name} shields the pressure and drives forward into space.`
+          : `${current.name} carries forward into the attacking channel.`,
         x: from.x, y: from.y, possessionAfterPlayerId: state.holder, possessionAfterTeamCode: state.team,
       });
       nextActionSecond = second + 3 + (seed >>> 3) % 5;
       return carryEvent;
     }
-    if (!nearbyTeammates.length) return;
-    const receiver = nearbyTeammates[Math.min(nearbyTeammates.length - 1, (seed >>> 4) % Math.min(4, nearbyTeammates.length))];
-    const distanceToReceiver = Math.hypot(receiver.position.x - from.x, receiver.position.y - from.y);
-    const pressured = nearestOpponents.length > 0
-      && Math.hypot(nearestOpponents[0].position.x - from.x, nearestOpponents[0].position.y - from.y) < 8.5;
-    const intercepted = distanceToReceiver > 24 || (pressured && seed % 100 < 13);
+    const receiver = forwardOptions[0] || lateralOptions[0] || switchOptions[0]
+      || (pressured ? safeBackwardOptions[0] : null);
+    if (!receiver) {
+      if (current.pos === "GK") {
+        nextActionSecond = second + 3;
+        return null;
+      }
+      const carryEvent = add({
+        period, periodSecond, eventType: "carry", action: "progressive_carry", outcome: "progressed",
+        teamCode: state.team, playerId: state.holder, participantIds: [state.holder], chainId: `carry-${second}`,
+        detail: `${current.name} advances with the ball while teammates move forward to offer options.`,
+        x: from.x, y: from.y, possessionAfterPlayerId: state.holder, possessionAfterTeamCode: state.team,
+      });
+      nextActionSecond = second + 3 + (seed >>> 3) % 5;
+      return carryEvent;
+    }
+    const distanceToReceiver = receiver.distanceToReceiver;
+    const intercepted = pressured && seed % 100 < (distanceToReceiver > 22 ? 22 : 9);
     const target = intercepted && nearestOpponents.length ? nearestOpponents[0] : receiver;
     const targetId = playerId(target.person.team, target.person.no);
     const pass = add({
@@ -379,7 +486,7 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
       passCompleted: !intercepted,
       detail: intercepted
         ? `${current.name}'s pass is cut out by ${target.person.name}.`
-        : `${current.name} passes to ${target.person.name}.`,
+        : `${current.name} plays forward to ${target.person.name}.`,
       x: from.x, y: from.y, targetX: target.position.x, targetY: target.position.y,
       possessionAfterPlayerId: targetId, possessionAfterTeamCode: target.person.team,
     });
@@ -391,10 +498,71 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
     return pass;
   };
 
+  const skippedShotChains = new Set();
+  const skippedEventIds = new Set();
+  const skipEventAndDescendants = (root) => {
+    const pendingIds = [root.event_id];
+    skippedShotChains.add(root.chain_id);
+    while (pendingIds.length) {
+      const parentId = pendingIds.pop();
+      if (skippedEventIds.has(parentId)) continue;
+      skippedEventIds.add(parentId);
+      for (const child of events) {
+        if (child.parent_event_id !== parentId) continue;
+        skippedShotChains.add(child.chain_id);
+        for (const chainEvent of events) {
+          if (chainEvent.chain_id === child.chain_id && !skippedEventIds.has(chainEvent.event_id)) {
+            pendingIds.push(chainEvent.event_id);
+          }
+        }
+      }
+    }
+  };
   for (let second = 0; second <= duration; second += 1) {
     const anchors = anchorsBySecond.get(second) || [];
+    const prealignment = prealignments.get(second);
+    if (prealignment && !state.stopped) {
+      const expectedId = anchorController(prealignment.event);
+      if (expectedId && state.holder !== expectedId) {
+        const link = ensureController(expectedId, second);
+        if (link) {
+          link.detail = `${link.detail} The team builds the attack early so the next action can follow a controlled reception.`;
+          nextActionSecond = prealignment.anchorSecond;
+        }
+      }
+    }
     if (anchors.length) {
       for (const event of anchors) {
+        if (skippedShotChains.has(event.chain_id) || skippedEventIds.has(event.event_id)
+          || skippedEventIds.has(event.parent_event_id)) {
+          event._skip = true;
+          continue;
+        }
+        if (event.chain_id === "late-shot-mci" && event.event_type === "shot"
+          && state.holder !== event.player_id) {
+          skippedShotChains.add(event.chain_id);
+          event._skip = true;
+          continue;
+        }
+        if (event.chain_id === "late-shot-ars" && event.event_type === "ball_recovery"
+          && state.holder && state.team === event.team_code && state.holder !== event.player_id) {
+          // The fixed transition only applies if Arsenal is winning the ball.
+          // If Arsenal already controls it, discard that stale turnover and its
+          // scripted descendants instead of teleporting possession between teammates.
+          const scriptedShot = events.find((candidate) => candidate.chain_id === event.chain_id
+            && candidate.event_type === "shot");
+          if (scriptedShot) skipEventAndDescendants(scriptedShot);
+          else skippedShotChains.add(event.chain_id);
+          event._skip = true;
+          continue;
+        }
+        if (event.chain_id === "late-shot-ars" && event.event_type === "ball_recovery"
+          && state.holder && state.team !== event.team_code) {
+          const previousHolder = peopleById.get(state.holder);
+          event.related_player_id = state.holder;
+          event.participant_ids = JSON.stringify([event.player_id, state.holder]);
+          event.detail = `Saka presses ${previousHolder?.name || state.holder} and wins possession in midfield.`;
+        }
         const expectedId = anchorController(event);
         if (expectedId && !state.stopped) ensureController(expectedId, second);
         applyAnchor(event);
@@ -403,7 +571,14 @@ function buildPassEvents({ add, events, people, home, away, half1Seconds, half2S
       nextActionSecond = second + (anchorStartsTransfer ? 7 : 3 + stableHash(`anchor-${second}`) % 5);
       continue;
     }
-    if (!reservedTimes.has(second) && second >= nextActionSecond && !state.stopped) makeOpenPlayAction(second);
+    const insideTackleIncident = second >= 4635 && second <= 4680;
+    if (!insideTackleIncident && !reservedTimes.has(second) && second >= nextActionSecond && !state.stopped) {
+      makeOpenPlayAction(second);
+    }
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index]._skip) events.splice(index, 1);
+    else delete events[index]._skip;
   }
 }
 function addRestartChain({ add, people, peopleById, home, away, half1Seconds, period, second, team, chainId, kind, offenderId = "", fouledId = "", incidentId = "", card = "", description = "" }) {
@@ -715,6 +890,17 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   // The offside incident is a complete pass → shot → flag → VAR review → disallowed goal chain.
   const offsideAt = 27 * 60 + 10;
   const offsideLoc = locationFor(away, offsideAt, home, 1, 9);
+  // City play forward into Haaland's feet just before Arsenal's exact Tactical Eye
+  // recovery. This gives the press a real live-ball target instead of teleporting
+  // possession onto a historical pass elsewhere in the match.
+  add({
+    period: 1, periodSecond: offsideAt - 5, eventType: "pass", action: "forward_support_pass", outcome: "completed",
+    teamCode: home, playerId: playerId(home, 16), relatedPlayerId: playerId(home, 9),
+    participantIds: [playerId(home, 16), playerId(home, 9)], chainId: "incident-offside-lead-in",
+    passCompleted: true, detail: "Rodri feeds Haaland in a forward support lane as Arsenal close to press.",
+    x: 0, y: 0, targetX: 0, targetY: 0,
+    possessionAfterPlayerId: playerId(home, 9), possessionAfterTeamCode: home,
+  });
   const offsideRecovery = add({
     period: 1, periodSecond: offsideAt - 4, eventType: "ball_recovery", action: "pressing_recovery", outcome: "won",
     teamCode: away, playerId: playerId(away, 8), relatedPlayerId: playerId(home, 9),
@@ -733,7 +919,7 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     x: offsideLoc.x - 4, y: offsideLoc.y, targetX: offsideLoc.x, targetY: offsideLoc.y,
     possessionAfterPlayerId: playerId(away, 9), possessionAfterTeamCode: away,
   });
-  add({
+  const offsideTouch = add({
     period: 1, periodSecond: offsideAt - 2, eventType: "carry", action: "first_touch_control",
     outcome: "controlled_in_stride", teamCode: away, playerId: playerId(away, 9),
     relatedPlayerId: playerId(away, 8), participantIds: [playerId(away, 9), playerId(away, 8)],
@@ -791,7 +977,7 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     { period: 2, second: 13 * 60 + 52, team: away },
     { period: 2, second: 18 * 60 + 30, team: home },
     { period: 2, second: 27 * 60 + 40, team: home },
-    { period: 2, second: 35 * 60, team: home },
+    { period: 2, second: 35 * 60, team: away },
   ];
   cornerPlans.forEach((plan, index) => addRestartChain({
     add, people, peopleById, home, away, half1Seconds, period: plan.period, second: plan.second,
@@ -949,6 +1135,31 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   const tackleChain = "incident-tackle-77";
   const tackleAt = 31 * 60 + 38;
   const tackleLoc = locationFor(home, globalSecond(2, tackleAt, half1Seconds), home, 2, 24);
+  const tackleLeadIn = "incident-tackle-lead-in";
+  add({
+    period: 2, periodSecond: tackleAt - 14, eventType: "pass", action: "pressure_release",
+    outcome: "completed", teamCode: home, playerId: playerId(home, 9), relatedPlayerId: playerId(home, 20),
+    participantIds: [playerId(home, 9), playerId(home, 20)], chainId: tackleLeadIn, incidentId: "tackle",
+    passCompleted: true, detail: "Jesus lays the ball back to Bernardo to escape Arsenal's pressure.",
+    possessionAfterPlayerId: playerId(home, 20), possessionAfterTeamCode: home,
+  });
+  const tackleLeadPass = add({
+    // Allow the first pass enough flight time to reach Bernardo before he plays
+    // the next forward ball into Kovacic's run.
+    period: 2, periodSecond: tackleAt - 11, eventType: "pass", action: "progressive_pass",
+    outcome: "completed", teamCode: home, playerId: playerId(home, 20), relatedPlayerId: playerId(home, 8),
+    participantIds: [playerId(home, 20), playerId(home, 8)], chainId: tackleLeadIn, incidentId: "tackle",
+    parentEventId: events.find((event) => event.chain_id === tackleLeadIn && event.event_type === "pass")?.event_id,
+    passCompleted: true, detail: "Bernardo Silva plays into Kovacic's path as City advance before the foul incident.",
+    possessionAfterPlayerId: playerId(home, 8), possessionAfterTeamCode: home,
+  });
+  add({
+    period: 2, periodSecond: tackleAt - 7, eventType: "carry", action: "shield_and_recycle",
+    outcome: "retained", teamCode: home, playerId: playerId(home, 8), participantIds: [playerId(home, 8)],
+    chainId: tackleLeadIn, parentEventId: tackleLeadPass.event_id, incidentId: "tackle",
+    detail: "Kovacic controls the forward pass, checks infield to keep possession, and is closed down before the next tackle.",
+    possessionAfterPlayerId: playerId(home, 8), possessionAfterTeamCode: home,
+  });
   const tackleRecovery = add({
     period: 2, periodSecond: tackleAt - 4, eventType: "ball_recovery", action: "tackle_recovery", outcome: "won",
     teamCode: away, playerId: playerId(away, 7), relatedPlayerId: playerId(home, 8),
@@ -1058,8 +1269,6 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     { period: 2, second: 10 * 60 + 45, team: home, shooter: 47, outcome: "saved", xg: 0.12, on: true },
     { period: 2, second: 16 * 60 + 10, team: away, shooter: 9, outcome: "saved", xg: 0.08, on: true },
     { period: 2, second: 30 * 60 + 20, team: home, shooter: 9, outcome: "saved", xg: 0.08, on: true },
-    { period: 2, second: 36 * 60 + 12, team: away, shooter: 11, outcome: "wide", xg: 0.02, on: false },
-    { period: 2, second: 37 * 60 + 15, team: home, shooter: 47, outcome: "wide", xg: 0.08, on: false, big: true },
   ];
   regularShots.forEach((shot, index) => {
     const opponent = shot.team === home ? away : home;
@@ -1179,6 +1388,29 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     showInCommentary: true, x: 36, y: 15, targetX: 52.5, targetY: 0,
   });
 
+  // City keep the attack alive after the late transition, get Haaland into the
+  // box, and finish the move with a close-range attempt rather than carrying to
+  // the goal line indefinitely.
+  const lateMciKeeper = people.find((person) => person.team === away && person.pos === "GK");
+  const lateMciShot = add({
+    period: 2, periodSecond: 47 * 60 + 10, eventType: "shot", action: "striker_shot",
+    outcome: "saved", teamCode: home, playerId: playerId(home, 9), goalkeeperId: playerId(away, lateMciKeeper.no),
+    participantIds: [playerId(home, 9), playerId(away, lateMciKeeper.no)], chainId: "late-shot-mci-final",
+    isShot: true, shotOnTarget: true, bigChance: true, xg: 0.34,
+    detail: "Haaland shoots from close range; Raya saves for Arsenal.",
+    commentary: "Haaland shoots from close range; Raya saves.", showInCommentary: true,
+    x: 0, y: 0, targetX: -52.5, targetY: 0,
+    possessionAfterPlayerId: playerId(away, lateMciKeeper.no), possessionAfterTeamCode: away,
+  });
+  add({
+    period: 2, periodSecond: 47 * 60 + 11, eventType: "save", action: "goalkeeper_save",
+    outcome: "shot_saved", teamCode: away, playerId: playerId(away, lateMciKeeper.no),
+    relatedPlayerId: lateMciShot.player_id, participantIds: [playerId(away, lateMciKeeper.no), lateMciShot.player_id],
+    chainId: "late-shot-mci-final", parentEventId: lateMciShot.event_id, countsAsSave: true,
+    detail: "Raya gathers Haaland's close-range attempt.", possessionAfterPlayerId: playerId(away, lateMciKeeper.no),
+    possessionAfterTeamCode: away,
+  });
+
   // Close every late shot with its real outcome and, when it goes wide, a goal-kick restart.
   for (const shot of [...events].filter((event) => event.event_type === "shot"
     && event.match_second >= LIVE_CUTOFF_SECONDS && event.outcome === "saved"
@@ -1234,19 +1466,32 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   buildPassEvents({ add, events, people, home, away, half1Seconds, half2Seconds });
   const lateFoulChallenge = events.find((event) => event.chain_id === "foul-22" && event.event_type === "challenge");
   if (lateFoulChallenge) {
-    const priorPass = events.filter((event) => event.event_type === "pass" && event.team_code === away
-      && event.match_second < lateFoulChallenge.match_second).sort((a, b) => b.match_second - a.match_second)[0];
-    const passerId = priorPass?.related_player_id || playerId(away, 7);
     const passSecond = lateFoulChallenge.match_second - 1;
-    add({
-      period: 2, periodSecond: periodSecondForMatchSecond(passSecond, 2, half1Seconds),
-      eventType: "pass", action: "short_pass_into_contact", outcome: "completed",
-      teamCode: away, playerId: passerId, relatedPlayerId: lateFoulChallenge.related_player_id,
-      participantIds: [passerId, lateFoulChallenge.related_player_id], chainId: "foul-22-transition",
-      parentEventId: priorPass?.event_id || "", passCompleted: true,
-      detail: "Saka slips the ball into Martinelli ahead of the closing challenge.",
-      possessionAfterPlayerId: lateFoulChallenge.related_player_id, possessionAfterTeamCode: away,
-    });
+    let holder = "";
+    let holderTeam = "";
+    for (const event of [...events].filter((item) => Number(item.match_second) < passSecond)
+      .sort((left, right) => Number(left.match_second) - Number(right.match_second) || left.sequence - right.sequence)) {
+      if (event.possession_after_player_id && event.possession_after_team_code) {
+        holder = event.possession_after_player_id;
+        holderTeam = event.possession_after_team_code;
+      }
+      if (["foul_decision", "corner_awarded", "penalty_awarded", "offside_decision", "ball_out"].includes(event.event_type)
+        || ["shot", "penalty_attempt"].includes(event.event_type) && ["wide", "goal_disallowed"].includes(event.outcome)) {
+        holder = "";
+        holderTeam = "";
+      }
+    }
+    if (holderTeam === away) {
+      add({
+        period: 2, periodSecond: periodSecondForMatchSecond(passSecond, 2, half1Seconds),
+        eventType: "pass", action: "short_pass_into_contact", outcome: "completed",
+        teamCode: away, playerId: holder, relatedPlayerId: lateFoulChallenge.related_player_id,
+        participantIds: [holder, lateFoulChallenge.related_player_id], chainId: "foul-22-transition",
+        parentEventId: "", passCompleted: true,
+        detail: "Arsenal move the ball toward Martinelli before the closing challenge.",
+        possessionAfterPlayerId: lateFoulChallenge.related_player_id, possessionAfterTeamCode: away,
+      });
+    }
   }
   alignClosingChallengesAfterPasses(events, half1Seconds, half2Seconds);
   shiftClosingPossessionLinks(events, half1Seconds, half2Seconds);
@@ -1366,7 +1611,8 @@ function sprintOffset(person, matchSecond) {
 
 function formationSlot(person, team, home, away, period, matchSecond, half1Seconds, movementScale = 1, includeSprints = false) {
   const formation = team === home ? HOME_FORMATION : AWAY_FORMATION;
-  const directional = team === home ? (period === 1 ? -1 : 1) : (period === 1 ? 1 : -1);
+  const ownGoalDirection = team === home ? (period === 1 ? -1 : 1) : (period === 1 ? 1 : -1);
+  const attackDirection = -ownGoalDirection;
   const pos = person.pos;
   const group = formation[pos];
   const groupIndex = Array.isArray(group) ? group.indexOf(person.no) : 0;
@@ -1375,14 +1621,19 @@ function formationSlot(person, team, home, away, period, matchSecond, half1Secon
     CM: [-15, 15], CDM: [0], LW: [-22], ST: [0], RW: [22],
     FB: [-20], W: [0], MF: [0],
   };
-  let x = directional * ({ GK: 44, RB: 32, CB: 32, LB: 32, CM: 18, CDM: 18, LW: 5, ST: 3, RW: 5, FB: 32, W: 6, MF: 18 }[pos] ?? 18);
+  const advanced = ["ST", "LW", "RW", "W"].includes(pos);
+  const baseX = { GK: 44, RB: 32, CB: 32, LB: 32, CM: 10, CDM: 9, LW: 27, ST: 32, RW: 27, FB: 32, W: 25, MF: 10 }[pos] ?? 10;
+  const movementDirection = advanced ? attackDirection : ownGoalDirection;
+  let x = movementDirection * baseX;
   const teamOffset = team === home ? -3 : 3;
   const movementSeed = stableHash(`${team}-${person.no}-movement`);
   const xPeriod = 18 + (movementSeed % 110) / 10;
   const yPeriod = 17 + ((movementSeed >>> 8) % 120) / 10;
   const xPhase = ((movementSeed >>> 16) % 6284) / 1000;
   const yPhase = ((movementSeed >>> 4) % 6284) / 1000;
-  x += directional * (teamOffset + 4.2 * movementScale * Math.sin(matchSecond / xPeriod * (2 * Math.PI) + xPhase));
+  x += movementDirection * ((advanced ? teamOffset * 0.35 : teamOffset)
+    + 4.2 * movementScale * Math.sin(matchSecond / xPeriod * (2 * Math.PI) + xPhase));
+  if (advanced) x = attackDirection * Math.max(pos === "ST" ? 28 : 23, x * attackDirection);
   const lateral = widths[pos] || [0];
   let y = (lateral[Math.max(0, groupIndex)] ?? lateral[0]) + 3.6 * movementScale * Math.sin(matchSecond / yPeriod * (2 * Math.PI) + yPhase);
   if (includeSprints && person.pos !== "GK") {
@@ -1502,6 +1753,9 @@ const PLAYER_RATING_HEADERS = [
 ];
 
 const PLAYER_RATING_SOURCE = "simulated_event_rating_v1";
+const PLAYER_RATING_BASE = 6.7;
+const PLAYER_RATING_IMPACT_SCALE = 0.5;
+const PLAYER_RATING_SEVERE_MISTAKE_CEILING = 4.8;
 
 export function buildPlayerRatings(events, frames, people) {
   const peopleById = new Map(people.filter((person) => !person.role).map((person) => [playerId(person.team, person.no), person]));
@@ -1513,6 +1767,8 @@ export function buildPlayerRatings(events, frames, people) {
     eventsBySecond.set(second, atSecond);
   }
   const ratings = new Map();
+  const directContributionPlayers = new Set();
+  const severeMistakes = new Set();
   const output = [];
   const ratingImpact = (event, actorsById) => {
     const impact = new Map();
@@ -1545,7 +1801,7 @@ export function buildPlayerRatings(events, frames, people) {
         else if (event.outcome === "goal_disallowed") add(player, 0.025, "shot_disallowed");
         break;
       case "penalty_attempt":
-        if (event.outcome === "saved") add(player, -0.18, "penalty_saved");
+        if (event.outcome === "saved") add(player, -2.25, "penalty_saved");
         else if (event.outcome === "scored") add(player, 0.08, "penalty_scored");
         break;
       case "save":
@@ -1568,7 +1824,7 @@ export function buildPlayerRatings(events, frames, people) {
           event.duel_won === true || event.duel_won === "true" ? "duel_won" : "duel_lost");
         break;
       case "card_shown":
-        add(player, event.outcome === "red" ? -1.0 : -0.25, event.outcome === "red" ? "red_card" : "yellow_card");
+        add(player, event.outcome === "red" ? -2.5 : -0.25, event.outcome === "red" ? "red_card" : "yellow_card");
         break;
       case "foul_decision":
         add(player, -0.025, "foul_committed");
@@ -1590,16 +1846,31 @@ export function buildPlayerRatings(events, frames, people) {
     const actorsById = new Map(actors.map((actor) => [actor.person_id, actor]));
     for (const actor of actors) {
       const person = peopleById.get(actor.person_id);
-      if (person && actor.status === "active" && !ratings.has(actor.person_id)) ratings.set(actor.person_id, 6.0);
+      if (person && actor.status === "active" && !ratings.has(actor.person_id)) ratings.set(actor.person_id, PLAYER_RATING_BASE);
     }
     const deltas = new Map();
     const linkedEvents = new Map();
     const reasons = new Map();
     for (const event of (eventsBySecond.get(second) || []).sort((left, right) => Number(left.sequence) - Number(right.sequence))) {
+      if (event.event_type === "goal" && event.outcome === "scored") {
+        if (peopleById.has(event.player_id)) directContributionPlayers.add(event.player_id);
+        if (peopleById.has(event.related_player_id)) directContributionPlayers.add(event.related_player_id);
+      }
+      if ((event.event_type === "penalty_attempt" && event.outcome === "saved")
+        || (event.event_type === "card_shown" && event.outcome === "red")) {
+        if (peopleById.has(event.player_id)) severeMistakes.add(event.player_id);
+      }
       for (const [id, result] of ratingImpact(event, actorsById)) {
         if (!ratings.has(id)) continue;
-        ratings.set(id, Math.max(4, Math.min(10, ratings.get(id) + result.delta)));
-        deltas.set(id, (deltas.get(id) || 0) + result.delta);
+        const isSevereImpact = result.reasons.some((reason) => reason === "penalty_saved" || reason === "red_card");
+        const appliedDelta = isSevereImpact ? result.delta : result.delta * PLAYER_RATING_IMPACT_SCALE;
+        const previousRating = ratings.get(id);
+        const ceiling = severeMistakes.has(id)
+          ? PLAYER_RATING_SEVERE_MISTAKE_CEILING
+          : directContributionPlayers.has(id) ? 10 : 7.99;
+        const updatedRating = Math.max(4, Math.min(ceiling, previousRating + appliedDelta));
+        ratings.set(id, updatedRating);
+        deltas.set(id, (deltas.get(id) || 0) + updatedRating - previousRating);
         linkedEvents.set(id, [...(linkedEvents.get(id) || []), event.event_id]);
         reasons.set(id, [...(reasons.get(id) || []), ...result.reasons]);
       }
@@ -1812,6 +2083,12 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
             - distance(basePositions.get(playerId(team, right.no)), previousBall))
           .slice(0, 2);
         pressers.forEach((person) => pressingPlayers.add(playerId(team, person.no)));
+        const nearestHighPresser = defenders.filter((person) => ["ST", "LW", "RW", "W"].includes(person.pos))
+          .sort((left, right) => distance(basePositions.get(playerId(team, left.no)), previousBall)
+            - distance(basePositions.get(playerId(team, right.no)), previousBall))[0];
+        if (nearestHighPresser && distance(basePositions.get(playerId(team, nearestHighPresser.no)), previousBall) <= 16) {
+          pressingPlayers.add(playerId(team, nearestHighPresser.no));
+        }
       }
     }
     let ball = { ...previousBall, z: 0 };
@@ -1829,18 +2106,54 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
         const substitution = currentEvents.find((event) => event.event_type === "substitution" && event.player_id === id);
         const outgoingPosition = substitution ? previousOutfieldPositions.get(substitution.related_player_id) : null;
         if (outgoingPosition) pos = { x: outgoingPosition.x, y: outgoingPosition.y };
-        const lineShiftX = clamp(previousBall.x * 0.20, -11, 11);
+        const defensiveLineShiftX = clamp(previousBall.x * 0.20, -11, 11);
         const lateralShiftY = clamp(previousBall.y * 0.18, -5.8, 5.8);
         const direction = attackingDirection(person.team);
         const attackProgress = clamp((previousBall.x * direction + 48) / 96, 0, 1);
         const frontPlayer = ["ST", "LW", "RW", "W"].includes(person.pos);
         if (lastPossession.team === person.team) {
           const forwardRun = ({ ST: 3.2, LW: 2.6, RW: 2.6, W: 2.4, RB: 1.8, LB: 1.8, FB: 1.8, CM: 1.4, CDM: 0.6, CB: 0.2 })[person.pos] ?? 0.6;
-          pos = { x: pos.x + lineShiftX + direction * forwardRun * attackProgress, y: pos.y + lateralShiftY };
+          const attackingLineAdvance = direction * (3 + attackProgress * 7);
+          pos = { x: pos.x + attackingLineAdvance + direction * forwardRun * attackProgress, y: pos.y + lateralShiftY };
           if (["LW", "RW", "W"].includes(person.pos)) pos.y += Math.sign(pos.y || (person.no % 2 ? 1 : -1)) * 2.2;
+          const carrier = basePositions.get(lastPossession.id) || previousBall;
+          if (id !== lastPossession.id && carrier) {
+            const laneSide = stableHash(`${id}-support-lane`) % 2 ? 1 : -1;
+            let support = null;
+            let blend = 0.3;
+            if (person.pos === "ST") {
+              support = { x: carrier.x + direction * 17, y: carrier.y * 0.28 };
+              blend = 0.1;
+            } else if (["LW", "RW", "W"].includes(person.pos)) {
+              const widthSide = Math.sign(pos.y || (person.no % 2 ? 1 : -1));
+              support = { x: carrier.x + direction * 12, y: widthSide * 24 };
+              blend = 0.12;
+            } else if (["CM", "MF"].includes(person.pos)) {
+              support = { x: carrier.x + direction * (laneSide > 0 ? 10 : 6), y: carrier.y + laneSide * 9 };
+              blend = 0.2;
+            } else if (person.pos === "CDM") {
+              support = { x: carrier.x - direction * 5, y: carrier.y + laneSide * 13 };
+              blend = 0.16;
+            } else if (["RB", "LB", "FB"].includes(person.pos)) {
+              const widthSide = Math.sign(pos.y || (person.no % 2 ? 1 : -1));
+              support = { x: carrier.x + direction * 7, y: widthSide * 26 };
+              blend = 0.18;
+            } else if (person.pos === "CB") {
+              support = { x: carrier.x - direction * 8, y: carrier.y + laneSide * 8 };
+              blend = 0.12;
+            }
+            if (support) {
+              support.x = clamp(support.x, -44, 44);
+              support.y = clamp(support.y, -29, 29);
+              pos = {
+                x: pos.x + (support.x - pos.x) * blend,
+                y: pos.y + (support.y - pos.y) * blend,
+              };
+            }
+          }
         } else {
           pos = {
-            x: pos.x + lineShiftX * (frontPlayer ? 0.38 : 1),
+            x: pos.x + defensiveLineShiftX * (frontPlayer ? 0.25 : 1),
             y: pos.y * 0.91 + lateralShiftY,
           };
           if (pressingPlayers.has(id)) {
@@ -1853,6 +2166,10 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
               y: pos.y + dy / span * Math.max(0, span - desiredGap) * 0.55,
             };
           }
+        }
+        if (frontPlayer) {
+          const advancedLine = person.pos === "ST" ? 28 : 23;
+          pos.x = direction * Math.max(advancedLine, pos.x * direction);
         }
         pos = { x: clamp(pos.x, -50, 50), y: clamp(pos.y, -32, 32) };
         if (active) {
@@ -2092,6 +2409,8 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       x: clamp(ball.x - attackDirection * 5, -48, 48),
       y: clamp(ball.y + mainRefSide * 8, -31, 31),
     };
+    const activePlayerPositions = actors.filter((actor) => actor.team && actor.status === "active")
+      .map((actor) => ({ x: actor.x, y: actor.y }));
     let mainTarget = preferredMainTarget;
     let activePassRoute = null;
     if (ballFlight && ballFlight.motion === "transfer" && !ballToPlayerId.startsWith("GOAL-")) {
@@ -2108,8 +2427,6 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       }
     }
     if (activePassRoute) {
-      const activePlayerPositions = actors.filter((actor) => actor.status === "active")
-        .map((actor) => ({ x: actor.x, y: actor.y }));
       const candidates = [];
       for (let angle = 0; angle < 360; angle += 15) {
         const radians = angle * Math.PI / 180;
@@ -2132,6 +2449,59 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       main: mainTarget,
       ar1: { x: clamp(ball.x + 4, -48, 48), y: -34 },
       ar2: { x: clamp(ball.x - 2, -48, 48), y: 34 },
+    };
+    const safeOfficialPosition = (role, proposed, target, previous) => {
+      const isSafe = (candidate) => distance(candidate, ball) >= 5.15
+        && activePlayerPositions.every((player) => distance(candidate, player) >= 2.15);
+      if (isSafe(proposed)) return proposed;
+      let best = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      const consider = (rawPoint) => {
+        const candidate = {
+          x: clamp(rawPoint.x, -48, 48),
+          y: clamp(rawPoint.y, -34, 34),
+        };
+        if (!isSafe(candidate)) return;
+        const travel = distance(candidate, previous);
+        if (travel > 10.45) return;
+        const routeClearance = activePassRoute ? distanceToPolyline(candidate, activePassRoute) : 20;
+        const routePenalty = Math.max(0, 7 - routeClearance) ** 2 * 3;
+        const travelPenalty = Math.max(0, travel - 7.2) * 1.5;
+        const mainRefBallRangePenalty = role === "main"
+          ? Math.max(0, distance(candidate, ball) - 11) ** 2 * 0.08
+          : 0;
+        const score = distance(candidate, target) + travel * 0.25 + routePenalty
+          + travelPenalty + mainRefBallRangePenalty;
+        if (score < bestScore) {
+          best = candidate;
+          bestScore = score;
+        }
+      };
+      const centers = [proposed, previous, target, ball];
+      const radii = [0, 1.5, 3, 4.5, 6, 8, 10, 13, 17, 22, 28, 36];
+      for (const center of centers) {
+        for (const radius of radii) {
+          if (center === ball && radius > 0 && radius < 5.5) continue;
+          if (radius === 0) {
+            consider(center);
+            continue;
+          }
+          for (let angle = 0; angle < 360; angle += 15) {
+            const radians = angle * Math.PI / 180;
+            consider({
+              x: center.x + Math.cos(radians) * radius,
+              y: center.y + Math.sin(radians) * radius,
+            });
+          }
+        }
+      }
+      if (!best) {
+        for (let x = -48; x <= 48; x += 1) {
+          for (let y = -34; y <= 34; y += 1) consider({ x, y });
+        }
+      }
+      if (!best) throw new Error(`No safe position found for referee at frame ${second}`);
+      return { x: round2(best.x), y: round2(best.y) };
     };
     const officials = Object.entries(officialTargets).map(([role, target]) => {
       const previous = previousOfficials[role];
@@ -2157,9 +2527,20 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
         }
         position = escape;
       }
+      position = safeOfficialPosition(role, position, target, previous);
       previousOfficials[role] = position;
       return { person_id: `OFFICIAL-${role}`, role, status: "active", ...position, z: 0 };
     });
+    for (const official of officials) {
+      if (distance(official, ball) < 5) {
+        throw new Error(`${official.person_id} is less than 5m from the ball at frame ${second}`);
+      }
+      const nearbyPlayer = actors.find((actor) => actor.team && actor.status === "active"
+        && distance(official, actor) < 2);
+      if (nearbyPlayer) {
+        throw new Error(`${official.person_id} is less than 2m from ${nearbyPlayer.person_id} at frame ${second}`);
+      }
+    }
     actors.push(...officials);
     const frame = {
       frame_id: frameId(second),
@@ -2227,13 +2608,22 @@ function alignClosingChallengesAfterPasses(events, half1Seconds, half2Seconds) {
   const shiftedChains = new Set();
   for (const challenge of events.filter((event) => event.match_second >= LIVE_CUTOFF_SECONDS
     && event.event_type === "challenge" && event.outcome === "foul")) {
+    const nearbyPasses = events.filter((event) => ["pass", "restart_delivery"].includes(event.event_type)
+      && Number(event.match_second) <= Number(challenge.match_second)
+      && Number(challenge.match_second) - Number(event.match_second) <= 4
+      && (event.team_code === teamForPlayerId(challenge.player_id)
+        || event.related_player_id === challenge.related_player_id))
+      .sort((left, right) => Number(right.match_second) - Number(left.match_second));
     const linkedPass = events.find((event) => event.match_second === challenge.match_second
       && event.event_type === "pass" && event.chain_id.startsWith("possession-link-")
-      && event.related_player_id === challenge.related_player_id);
+      && event.related_player_id === challenge.related_player_id) || nearbyPasses[0];
     if (!linkedPass || shiftedChains.has(challenge.chain_id)) continue;
     const length = Math.hypot(Number(linkedPass.target_x) - Number(linkedPass.location_x),
       Number(linkedPass.target_y) - Number(linkedPass.location_y));
-    const delay = Math.max(1, Math.ceil(length / 17.5));
+    const flightSeconds = Math.max(1, Math.ceil(length / 17.5));
+    const elapsedBeforeWhistle = Number(challenge.match_second) - Number(linkedPass.match_second);
+    const delay = Math.max(0, flightSeconds - elapsedBeforeWhistle);
+    if (delay === 0) continue;
     for (const event of events.filter((candidate) => candidate.chain_id === challenge.chain_id)) {
       retime(event, Number(event.match_second) + delay);
     }
@@ -2309,8 +2699,8 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
   addPath("ARS-7", [baseKey("ARS-7", 4640), { second: 4654, x: 2.35, y: -28.48 },
     { second: 4663, x: 14.1, y: -27.73 },
     { second: 4672, x: 14, y: -25 }, { second: 4674, x: 16, y: -23 }, baseKey("ARS-7", 4680)]);
-  addPath("MCI-8", [baseKey("MCI-8", 4640), { second: 4645, x: 20.37, y: -15.82 },
-    { second: 4650, x: 9, y: -20 }, { second: 4651, x: 8, y: -21 },
+  addPath("MCI-8", [baseKey("MCI-8", 4640), { second: 4645, x: -42, y: -15 },
+    { second: 4650, x: -15, y: -22 }, { second: 4651, x: -9, y: -23 },
     { second: 4654, x: 2.35, y: -28.48 }, { second: 4657, x: 0, y: -25 }, baseKey("MCI-8", 4672)]);
   addPath("ARS-8", [baseKey("ARS-8", 4663), { second: 4672, x: 10.14, y: -28.06 },
     { second: 4674, x: 12, y: -26 }, baseKey("ARS-8", 4680)]);
@@ -2352,8 +2742,12 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
     }
     const b = overrides.get(victim)?.get(second) || getPos(victim, second);
     if (!a || !b) continue;
-    // The fouled player is the current carrier; bring the challenger to the ball carrier.
-    const contact = { x: b.x, y: b.y };
+    // Keep each foul attached to the ball's live location, then bring both
+    // participants there along a speed-limited run-in before contact.
+    const challengeFrame = bySecond.get(second);
+    const contact = challengeFrame
+      ? { x: Number(challengeFrame.ball_x), y: Number(challengeFrame.ball_y) }
+      : { x: b.x, y: b.y };
     const settleSecond = Math.min(Number(restart.match_second), second + 3);
     addPath(offender, [baseKey(offender, start), { second, ...contact }, { second: settleSecond, ...contact },
       baseKey(offender, Math.min(5640, Number(restart.match_second) + 5))]);
@@ -2740,7 +3134,11 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
         continue;
       }
       if (event.event_type === "challenge" && event.outcome === "foul") {
-        ball = { x: Number(event.location_x), y: Number(event.location_y) };
+        const foulPoint = { x: Number(event.location_x), y: Number(event.location_y) };
+        // Off-ball fouls do not teleport a live ball across the pitch. If the ball
+        // is already within one realistic touch distance, settle it at contact;
+        // otherwise freeze it at its current position until the awarded restart.
+        if (Math.hypot(foulPoint.x - ball.x, foulPoint.y - ball.y) <= 18) ball = foulPoint;
         possession = { id: "", team: "" };
         flight = null;
         lastTouch = event.event_id;
@@ -2814,11 +3212,6 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
   const offsideDelivery = eventFor("incident-offside", "restart_delivery", 1637);
   const offsideResolution = eventFor("incident-offside", "restart_resolution", 1639);
   if ([offsideRecovery, offsidePass, offsideTouch, offsideShot, offsideCall, offsideDelivery, offsideResolution].every(Boolean)) {
-    const precedingCarry = events.find((event) => event.match_second === 1625 && event.event_type === "carry" && event.player_id === "MCI-9");
-    const precedingTouch = events.filter((event) => event.match_second < 1625 && event.event_type === "pass"
-      && event.related_player_id === "MCI-9").sort((a, b) => b.match_second - a.match_second)[0];
-    setFrameBall(1624, actorPos("MCI-9", 1624), "controlled", precedingTouch?.event_id || "", "MCI-9", "MCI-9", "MCI-9");
-    if (precedingCarry) setFrameBall(1625, actorPos("MCI-9", 1625), "controlled", precedingCarry.event_id, "MCI-9", "MCI-9", "MCI-9");
     const offsideSimulation = incidentSimulations.offside;
     const recoveryTime = simulationTimeAtMatchSecond("offside", offsideSimulation, 1626);
     const recoveryState = sampleOffsideFrame(offsideSimulation, recoveryTime);
@@ -2850,15 +3243,16 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
 
   // Reconstruct the lead-in pass to the tackle so the receiver cannot be
   // treated as having possession before the ball has physically arrived.
-  const tackleLeadPass = events.find((event) => event.event_id === "event-00953");
-  const tackleLeadCarry = events.find((event) => event.event_id === "event-00954");
+  const tackleLeadPass = events.find((event) => event.chain_id === "incident-tackle-lead-in"
+    && event.event_type === "pass" && Number(event.match_second) === 4647);
+  const tackleLeadCarry = events.find((event) => event.chain_id === "incident-tackle-lead-in" && event.event_type === "carry");
   if (tackleLeadPass && tackleLeadCarry && tackleLeadPass.related_player_id === "MCI-8") {
     const source = { x: Number(tackleLeadPass.location_x), y: Number(tackleLeadPass.location_y) };
-    setFrameBall(4645, source, "transfer", tackleLeadPass.event_id,
+    setFrameBall(4647, source, "transfer", tackleLeadPass.event_id,
       tackleLeadPass.player_id, tackleLeadPass.related_player_id, "");
     let routeBall = source;
     let arrived = false;
-    for (let second = 4646; second < tackleLeadCarry.match_second; second += 1) {
+    for (let second = 4648; second < tackleLeadCarry.match_second; second += 1) {
       const target = actorPos(tackleLeadPass.related_player_id, second);
       const dx = target.x - routeBall.x;
       const dy = target.y - routeBall.y;
@@ -3051,6 +3445,118 @@ function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
     || String(left.frame_id).localeCompare(String(right.frame_id)));
 }
 
+function repairOfficialClearances(frames) {
+  const officialIds = ["OFFICIAL-main", "OFFICIAL-ar1", "OFFICIAL-ar2"];
+  const previous = new Map();
+  const safeBallGap = 5.16;
+  const safePlayerGap = 2.16;
+  const insidePitch = (point) => point.x >= -48 && point.x <= 48 && point.y >= -34 && point.y <= 34;
+
+  for (const frame of frames) {
+    const actors = JSON.parse(frame.actors);
+    const ball = { x: Number(frame.ball_x), y: Number(frame.ball_y) };
+    const players = actors.filter((actor) => actor.team && actor.status === "active")
+      .map((actor) => ({ x: Number(actor.x), y: Number(actor.y) }));
+    for (const officialId of officialIds) {
+      const official = actors.find((actor) => actor.person_id === officialId);
+      if (!official) continue;
+      const target = { x: Number(official.x), y: Number(official.y) };
+      const prior = previous.get(officialId);
+      const elapsed = prior && prior.period === Number(frame.period)
+        ? Math.max(0, (Number(frame.match_ms) - prior.matchMs) / 1000)
+        : 0;
+      const maxTravel = prior && elapsed > 0 ? 10 * elapsed : Number.POSITIVE_INFINITY;
+      const isSafe = (point) => insidePitch(point)
+        && Math.hypot(point.x - ball.x, point.y - ball.y) >= safeBallGap
+        && players.every((player) => Math.hypot(point.x - player.x, point.y - player.y) >= safePlayerGap);
+      const canReach = (point) => !prior || elapsed === 0
+        || Math.hypot(point.x - prior.x, point.y - prior.y) <= maxTravel + 0.002;
+
+      let selected = target;
+      if (!isSafe(selected) || !canReach(selected)) {
+        const candidates = [];
+        const add = (raw) => {
+          const point = { x: round2(clamp(raw.x, -48, 48)), y: round2(clamp(raw.y, -34, 34)) };
+          if (canReach(point) && isSafe(point)) candidates.push(point);
+        };
+        const project = (seed) => {
+          let point = { ...seed };
+          for (let iteration = 0; iteration < 24; iteration += 1) {
+            let adjusted = false;
+            let dx = point.x - ball.x;
+            let dy = point.y - ball.y;
+            let gap = Math.hypot(dx, dy);
+            if (gap < safeBallGap) {
+              if (gap < 0.001) { dx = 1; dy = 0; gap = 1; }
+              point.x += dx / gap * (safeBallGap - gap + 0.01);
+              point.y += dy / gap * (safeBallGap - gap + 0.01);
+              adjusted = true;
+            }
+            for (const player of players) {
+              dx = point.x - player.x;
+              dy = point.y - player.y;
+              gap = Math.hypot(dx, dy);
+              if (gap < safePlayerGap) {
+                if (gap < 0.001) { dx = player.x <= 0 ? 1 : -1; dy = 0; gap = 1; }
+                point.x += dx / gap * (safePlayerGap - gap + 0.01);
+                point.y += dy / gap * (safePlayerGap - gap + 0.01);
+                adjusted = true;
+              }
+            }
+            point.x = clamp(point.x, -48, 48);
+            point.y = clamp(point.y, -34, 34);
+            if (!adjusted) break;
+          }
+          add(point);
+        };
+        project(target);
+        if (prior) {
+          project(prior);
+          const toward = Math.atan2(target.y - prior.y, target.x - prior.x);
+          const travelRadii = [...new Set([0.2, 0.4, 0.6, 0.8, 1].map((ratio) => maxTravel * ratio))];
+          for (const radius of travelRadii) {
+            for (let angle = 0; angle < 360; angle += 10) {
+              const radians = angle * Math.PI / 180;
+              const point = { x: prior.x + Math.cos(radians) * radius, y: prior.y + Math.sin(radians) * radius };
+              add(point);
+              project(point);
+            }
+            add({ x: prior.x + Math.cos(toward) * radius, y: prior.y + Math.sin(toward) * radius });
+          }
+        } else {
+          const centers = [target, ball, ...players];
+          for (const center of centers) {
+            const radius = center === ball ? safeBallGap + 0.05 : safePlayerGap + 0.05;
+            for (let angle = 0; angle < 360; angle += 8) {
+              const radians = angle * Math.PI / 180;
+              const point = { x: center.x + Math.cos(radians) * radius, y: center.y + Math.sin(radians) * radius };
+              add(point);
+              project(point);
+            }
+          }
+        }
+        if (!candidates.length) {
+          throw new Error(`${frame.frame_id} cannot keep ${officialId} at least 5m from the ball and 2m from every active player within the referee speed limit`);
+        }
+        const score = (point) => {
+          const playerClearance = Math.min(...players.map((player) => Math.hypot(point.x - player.x, point.y - player.y)));
+          const ballClearance = Math.hypot(point.x - ball.x, point.y - ball.y);
+          const clearancePenalty = Math.max(0, 7 - playerClearance) ** 2 * 0.14
+            + Math.max(0, 8 - ballClearance) ** 2 * 0.06;
+          const travelPenalty = prior ? Math.hypot(point.x - prior.x, point.y - prior.y) * 0.04 : 0;
+          return Math.hypot(point.x - target.x, point.y - target.y) + clearancePenalty + travelPenalty;
+        };
+        candidates.sort((left, right) => score(left) - score(right));
+        selected = candidates[0];
+      }
+      official.x = selected.x;
+      official.y = selected.y;
+      previous.set(officialId, { x: selected.x, y: selected.y, matchMs: Number(frame.match_ms), period: Number(frame.period) });
+    }
+    frame.actors = JSON.stringify(actors);
+  }
+}
+
 const EVENT_HEADERS = [
   "event_id", "sequence", "period", "period_ms", "match_ms", "match_second", "clock_label", "minute_label", "period_added_seconds", "phase", "frame_id",
   "chain_id", "parent_event_id", "event_type", "action", "outcome", "team_code", "awarded_team_code", "player_id", "related_player_id", "target_player_id", "goalkeeper_id", "referee_id", "participant_ids",
@@ -3160,9 +3666,16 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
         && ["wide", "goal_disallowed"].includes(event.outcome));
       const allowedBallExit = frameEvents.some((event) => event.event_type === "ball_out"
         || event.event_type === "goal" && event.outcome === "scored") || shotExit;
-      if (ballSpeed > 18.01 && !allowedBallExit) {
+      const highSpeedBlockedShot = ballSpeed <= 45.01
+        && frameEvents.some((event) => event.event_type === "shot" && event.outcome === "blocked_out_for_corner");
+      const highSpeedClearance = ballSpeed <= 30.01
+        && frameEvents.some((event) => ["restart_resolution", "aerial_duel", "block"].includes(event.event_type));
+      const previousRoute = eventsById.get(previousFrame.ball_interaction_event_id);
+      const passReception = ballSpeed <= 20.01 && currentFrame.ball_motion === "controlled"
+        && ["pass", "restart_delivery"].includes(previousRoute?.event_type);
+      if (ballSpeed > 18.01 && !allowedBallExit && !highSpeedBlockedShot && !highSpeedClearance && !passReception) {
         const eventTypes = frameEvents.map((event) => event.event_type).join(",") || "none";
-        throw new Error(`${currentFrame.frame_id} ball moves ${ballSpeed.toFixed(1)}m in one sample without an exit or goal event (from=${previousFrame.ball_x},${previousFrame.ball_y} to=${currentFrame.ball_x},${currentFrame.ball_y}, motion=${previousFrame.ball_motion}->${currentFrame.ball_motion}, interaction=${currentFrame.ball_interaction_event_id || "none"}, events=${frameEvents.map((event) => `${event.event_id}:${event.event_type}:${event.player_id}:${event.related_player_id}`).join("|")})`);
+        throw new Error(`${currentFrame.frame_id} ball moves ${ballSpeed.toFixed(1)}m in one sample without an exit or goal event (from=${previousFrame.ball_x},${previousFrame.ball_y} to=${currentFrame.ball_x},${currentFrame.ball_y}, motion=${previousFrame.ball_motion}->${currentFrame.ball_motion}, prior=${previousFrame.ball_interaction_event_id}/${previousFrame.ball_from_player_id}>${previousFrame.ball_to_player_id}/${previousFrame.possession_player_id}, interaction=${currentFrame.ball_interaction_event_id || "none"}, priorEvents=${previousFrame.event_ids}, events=${frameEvents.map((event) => `${event.event_id}:${event.event_type}:${event.action}:${event.outcome}:${event.player_id}:${event.related_player_id}:${event.location_x},${event.location_y}->${event.target_x},${event.target_y}`).join("|")})`);
       }
       const strictMotionSpan = Number(currentFrame.match_second) >= LIVE_CUTOFF_SECONDS
         || Number(currentFrame.match_second) >= 1600 && Number(currentFrame.match_second) <= 1645
@@ -3179,6 +3692,15 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
     if (new Set(ids).size !== ids.length) throw new Error(`${frame.frame_id} has duplicate actors`);
     const activeActors = actorRows.filter((actor) => actor.status === "active");
     const active = activeActors.filter((actor) => actor.team);
+    for (const officialId of OFFICIALS) {
+      const official = actorsById.get(officialId);
+      if (!official) throw new Error(`${frame.frame_id} is missing ${officialId}`);
+      if (Math.hypot(Number(official.x) - Number(frame.ball_x), Number(official.y) - Number(frame.ball_y)) < 5) {
+        throw new Error(`${frame.frame_id} ${officialId} is less than 5m from the ball after incident reconciliation`);
+      }
+      const nearbyPlayer = active.find((actor) => Math.hypot(Number(official.x) - Number(actor.x), Number(official.y) - Number(actor.y)) < 2);
+      if (nearbyPlayer) throw new Error(`${frame.frame_id} ${officialId} is less than 2m from ${nearbyPlayer.person_id} after incident reconciliation`);
+    }
     const homeCount = active.filter((actor) => actor.team === home).length;
     const awayCount = active.filter((actor) => actor.team === away).length;
     if (frame.match_second < half1Seconds + half2Seconds && (homeCount !== 11 || awayCount !== 11)) {
@@ -3420,19 +3942,19 @@ function assertCriticalTimelines(events, frames, people, home, away) {
 
   // The tackle chain requires a real lead-in pass, recovery and carries, contact,
   // frozen foul review, then the awarded team's restart and first control.
-  const leadPass = events.find((item) => item.event_type === "pass" && Number(item.match_second) === 4645
+  const leadPass = events.find((item) => item.event_type === "pass" && Number(item.match_second) === 4647
     && item.player_id === "MCI-20" && item.related_player_id === "MCI-8");
   const leadCarry = events.find((item) => item.event_type === "carry" && Number(item.match_second) === 4651
     && item.player_id === "MCI-8");
   if (!leadPass || !leadCarry) throw new Error("Tackle incident is missing its linked lead-in pass or control");
-  assertRoute(4645, leadPass, leadPass.related_player_id);
+  assertRoute(4647, leadPass, leadPass.related_player_id);
   let receptionSecond = null;
-  for (let second = 4646; second < 4651; second += 1) {
+  for (let second = 4648; second < 4651; second += 1) {
     const frame = bySecond.get(second);
     if (frame.possession_player_id === "MCI-8") { receptionSecond = second; break; }
   }
   if (receptionSecond === null) throw new Error("MCI-8 never receives the lead-in pass before the carry");
-  for (let second = 4646; second <= 4650; second += 1) {
+  for (let second = 4648; second <= 4650; second += 1) {
     const frame = bySecond.get(second);
     if (frame.ball_interaction_event_id !== leadPass.event_id
       || (second < receptionSecond && frame.possession_player_id)
@@ -3572,6 +4094,7 @@ export function buildMatchTables({ people, home, away, half1Seconds, half2Second
   const movementProfiles = buildMovementProfiles(people);
   const frames = buildFrames(events, { people, home, away, half1Seconds, half2Seconds, movementProfiles });
   reconcileCriticalFrames(events, frames, { home, away, half1Seconds });
+  repairOfficialClearances(frames);
   assertDataset(events, frames, people, half1Seconds, half2Seconds, home, away);
   assertCriticalTimelines(events, frames, people, home, away);
   const movementSummaries = summarizePlayerMovement(frames);

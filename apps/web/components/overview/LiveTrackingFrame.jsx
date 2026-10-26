@@ -2,11 +2,133 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FootballIcon } from "@/components/ui/football-icon";
+import { Whistle } from "lucide-react";
+import { CardIcon } from "./event-icons";
 
-export default function LiveTrackingFrame({ frame, match, people = [], mode = "live", emptyMessage }) {
+
+const LIVE_EVENT_TYPES = new Set([
+  "goal", "penalty-goal", "own-goal", "goal-disallowed", "penalty-missed",
+  "yellow", "red", "foul", "penalty-awarded", "corner-awarded", "offside", "ball-out",
+]);
+
+function formatEventClock(event) {
+  if (event.clockLabel?.includes(":")) return event.clockLabel.replace(":", "'") + "''";
+  const minute = event.minuteLabel || event.minute;
+  return minute == null ? "" : String(minute) + "'";
+}
+
+function opposingTeamCode(teamCode, match) {
+  if (teamCode === match.home.code) return match.away.code;
+  if (teamCode === match.away.code) return match.home.code;
+  return null;
+}
+
+function liveEventPresentation(event, match, teamsByPersonId) {
+  const teamCode = event.awardedTeamCode
+    || (["penalty-awarded", "corner-awarded", "offside"].includes(event.type) ? event.teamCode : null);
+  const clock = formatEventClock(event);
+  if (event.type === "goal" || event.type === "penalty-goal") {
+    return {
+      label: event.type === "penalty-goal" ? "PENALTY GOAL" : "GOAL",
+      icon: "ball",
+      iconColor: event.type === "penalty-goal" ? "text-emerald-500" : undefined,
+      detail: event.player,
+      teamCode: event.teamCode,
+      score: event.score,
+      clock,
+    };
+  }
+  if (event.type === "own-goal") {
+    return {
+      label: "OWN GOAL",
+      icon: "ball",
+      iconColor: "text-violet-400",
+      detail: event.player,
+      teamCode: opposingTeamCode(event.teamCode, match) || event.teamCode,
+      score: event.score,
+      clock,
+    };
+  }
+  if (event.type === "goal-disallowed" || event.type === "penalty-missed") {
+    const savedByTeam = teamsByPersonId.get(event.goalkeeperId);
+    return {
+      label: event.type === "goal-disallowed" ? "NO GOAL" : "PENALTY SAVED",
+      icon: "missed-ball",
+      detail: event.player
+        ? `${event.player}${event.type === "goal-disallowed" && event.teamCode ? ` (${event.teamCode})` : ""} · BALL TO`
+        : "BALL TO",
+      teamCode: event.type === "penalty-missed"
+        ? savedByTeam || opposingTeamCode(event.teamCode, match)
+        : event.awardedTeamCode || opposingTeamCode(event.teamCode, match),
+      clock,
+    };
+  }
+  if (event.type === "yellow" || event.type === "red") {
+    return {
+      label: event.type === "yellow" ? "YELLOW CARD" : "RED CARD",
+      icon: "card",
+      cardColor: event.type === "yellow" ? "#f5c518" : "#e5484d",
+      detail: event.player,
+      teamCode: event.teamCode,
+      clock,
+    };
+  }
+
+  const decisionLabels = {
+    foul: "FREE KICK",
+    "penalty-awarded": "PENALTY",
+    "corner-awarded": "CORNER",
+    offside: "OFFSIDE",
+  };
+  if (decisionLabels[event.type] && teamCode) {
+    return { label: decisionLabels[event.type], icon: "whistle", teamCode, clock };
+  }
+  if (event.type === "ball-out" && event.outcome !== "corner" && teamCode) {
+    const restartLabels = {
+      goal_kick: "GOAL KICK",
+      throw_in: "THROW-IN",
+    };
+    const label = restartLabels[event.restartType] || restartLabels[event.outcome];
+    if (label) return { label, icon: "whistle", teamCode, clock };
+  }
+  return null;
+}
+
+function liveMatchSituation(frame, match, teamsByPersonId) {
+  const ball = frame?.ball;
+  if (!ball) return null;
+  if (ball.motion === "out") return { label: "BALL OUT" };
+  if (ball.motion === "stopped") return { label: "PLAY STOPPED" };
+
+  const fromTeam = teamsByPersonId.get(ball.fromPlayerId);
+  const toTeam = teamsByPersonId.get(ball.toPlayerId);
+  const teamCode = ball.motion === "shot" || ball.motion === "goal"
+    ? fromTeam || frame.possession?.teamCode || toTeam
+    : frame.possession?.teamCode || fromTeam || toTeam;
+  if (ball.motion === "goal") return { label: "GOAL", teamCode };
+  if (ball.motion === "shot") return { label: "SHOT", teamCode };
+  if (!teamCode || (teamCode !== match.home.code && teamCode !== match.away.code)) {
+    return { label: "LOOSE BALL" };
+  }
+
+  const isHome = teamCode === match.home.code;
+  const homeAttacksRight = frame.period === 1;
+  const attacksRight = isHome ? homeAttacksRight : !homeAttacksRight;
+  const attackingProgress = (Number(ball.x) || 0) * (attacksRight ? 1 : -1);
+  const label = attackingProgress < 0
+    ? "BALL SAFE"
+    : attackingProgress >= 35
+      ? "DANGEROUS ATTACK"
+      : "ATTACKING";
+  return { label, teamCode };
+}
+
+export default function LiveTrackingFrame({ frame, match, people = [], mode = "live", emptyMessage, liveEvents = [] }) {
   const actors = frame?.actors?.filter((actor) => actor.status === "active") || [];
   const positionsByPersonId = new Map(people.map((person) => [person.personId, person.position]));
   const namesByPersonId = new Map(people.map((person) => [person.personId, person.name]));
+  const teamsByPersonId = new Map(people.map((person) => [person.personId, person.teamCode || person.team]));
   const holderId = frame?.possession?.playerId;
   const ballControlled = frame?.ball?.motion === "controlled";
   const [animatedBall, setAnimatedBall] = useState(frame?.ball || null);
@@ -14,6 +136,8 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
   const displayedFrameRef = useRef(null);
   const previousActorPositionsRef = useRef(new Map());
   const actorTransitionRef = useRef(null);
+  const [eventQueue, setEventQueue] = useState([]);
+  const seenEventIdsRef = useRef(new Set());
   const frameKey = frame?.frameId || frame?.timeMilliseconds;
   useEffect(() => {
     if (!frameKey) return;
@@ -25,6 +149,30 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
     };
     previousActorPositionsRef.current = nextPositions;
   }, [frameKey]);
+  useEffect(() => {
+    if (mode !== "live") return;
+    const incoming = liveEvents.filter((event) =>
+      LIVE_EVENT_TYPES.has(event.type)
+      && event.id
+      && !seenEventIdsRef.current.has(event.id)
+      && liveEventPresentation(event, match, teamsByPersonId),
+    );
+    if (!incoming.length) return;
+    incoming.forEach((event) => seenEventIdsRef.current.add(event.id));
+    setEventQueue((current) => [...current, ...incoming]);
+  }, [liveEvents, mode, match, teamsByPersonId]);
+
+  const activeEvent = mode === "live" ? eventQueue[0] || null : null;
+  const activeEventPresentation = activeEvent ? liveEventPresentation(activeEvent, match, teamsByPersonId) : null;
+  useEffect(() => {
+    if (!activeEvent) return undefined;
+    const activeEventId = activeEvent.id;
+    const timeout = window.setTimeout(() => {
+      setEventQueue((current) => current[0]?.id === activeEventId ? current.slice(1) : current);
+    }, 2000);
+    return () => window.clearTimeout(timeout);
+  }, [activeEvent?.id]);
+
   useEffect(() => {
     if (!frame?.ball) return undefined;
     const frameKey = frame.frameId || frame.timeMilliseconds;
@@ -72,31 +220,87 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
   const viewHeight = 68;
   const pitchWidthRatio = (viewWidth / viewHeight) / (16 / 9);
   const pitchSideGutter = (1 - pitchWidthRatio) / 2;
-  const point = (x, y) => ({
-    left: `${(pitchSideGutter + ((x + 55.5) / viewWidth) * pitchWidthRatio) * 100}%`,
-    top: `${Math.max(1, Math.min(99, ((y + 34) / 68) * 100))}%`,
-  });
+  const point = (x, y) => mode === "incident"
+    ? {
+      left: `${((34 - y) / 68) * 100}%`,
+      top: `${((x + 58.5) / 111) * 100}%`,
+    }
+    : {
+      left: `${(pitchSideGutter + ((x + 55.5) / viewWidth) * pitchWidthRatio) * 100}%`,
+      top: `${Math.max(1, Math.min(99, ((y + 34) / 68) * 100))}%`,
+    };
   const actorTransition = actorTransitionRef.current?.frameKey === frameKey ? actorTransitionRef.current : null;
   const actorTransitionProgress = mode === "incident" || !actorTransition
     ? 1
     : Math.max(0, Math.min(1, (performance.now() - actorTransition.startedAt) / 1000));
+  const situation = mode === "live" ? liveMatchSituation(frame, match, teamsByPersonId) : null;
+  const displayedStatus = activeEventPresentation || situation;
+  const situationTeamColor = displayedStatus?.teamCode === match.home.code
+    ? match.home.color
+    : displayedStatus?.teamCode === match.away.code
+      ? match.away.color
+      : null;
   return (
-    <Card className="shrink-0 overflow-hidden">
-      <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
-        <CardTitle className="text-sm">{mode === "incident" ? "2D live" : "Live tracking"}</CardTitle>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
-          <span className={`size-1.5 rounded-full ${mode === "incident" ? "bg-primary" : "animate-pulse bg-red-500"}`} />
-          {mode === "incident" ? `Incident timeline · ${frame?.clockLabel || "—"}` : frame?.clockLabel || "Waiting for frame"}
+    <Card className={mode === "incident" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "shrink-0 overflow-hidden"}>
+      <CardHeader className="flex-row shrink-0 items-center justify-between gap-2 space-y-0 py-2">
+        <CardTitle className={`text-sm ${mode === "incident" ? "shrink-0 whitespace-nowrap" : ""}`}>{mode === "incident" ? "2D live" : "Live tracking"}</CardTitle>
+        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap desk-type-meta font-semibold tabular-nums text-muted-foreground">
+          <span className={`size-1.5 rounded-full bg-primary ${mode === "incident" ? "" : "animate-pulse"}`} />
+          {frame?.clockLabel || (mode === "incident" ? "—" : "Waiting for frame")}
         </span>
       </CardHeader>
-      <CardContent className={mode === "incident" ? "px-2 pb-2 pt-0" : "py-2"}>
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-emerald-800" aria-label={mode === "incident" ? "Incident-time 2D player and ball tracking frame" : "Live player and ball tracking frame"}>
+      <CardContent className={mode === "incident" ? "flex min-h-0 flex-1 flex-col px-2 pb-2 pt-0" : "py-2"}>
+        <div className={`relative w-full overflow-hidden rounded-panel border bg-emerald-800 ${mode === "incident" ? "flex min-h-0 flex-1 items-center justify-center" : "aspect-video"}`} aria-label={mode === "incident" ? "Incident-time 2D player and ball tracking frame" : "Live player and ball tracking frame"}>
+          <div className={mode === "incident" ? "relative h-full aspect-[68/111] max-w-full" : "absolute inset-0"}>
+          {mode === "live" && frame ? (
+            <>
+              {displayedStatus ? (
+                <div
+                  className="pointer-events-none absolute left-1/2 top-2 z-40 flex max-w-[calc(100%-16px)] -translate-x-1/2 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border border-white/20 bg-black/75 px-2 py-1 text-white shadow-sm backdrop-blur-sm"
+                  role="status"
+                  aria-label={[displayedStatus.clock, displayedStatus.label, displayedStatus.detail, displayedStatus.teamCode, displayedStatus.score].filter(Boolean).join(" · ")}
+                >
+                  {activeEventPresentation?.clock ? (
+                    <span className="shrink-0 desk-type-meta font-semibold text-white/65">{activeEventPresentation.clock}</span>
+                  ) : null}
+                  {activeEventPresentation?.icon === "card" ? (
+                    <CardIcon color={activeEventPresentation.cardColor} size={14} />
+                  ) : activeEventPresentation?.icon === "ball" || activeEventPresentation?.icon === "missed-ball" ? (
+                    <FootballIcon
+                      size={14}
+                      className={activeEventPresentation.iconColor}
+                      missed={activeEventPresentation.icon === "missed-ball"}
+                    />
+                  ) : activeEventPresentation?.icon === "whistle" ? (
+                    <Whistle className="size-3.5 shrink-0" aria-hidden="true" />
+                  ) : situationTeamColor ? (
+                    <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: situationTeamColor }} />
+                  ) : null}
+                  <span className="shrink-0 desk-type-meta font-bold tracking-[0.08em]">{displayedStatus.label}</span>
+                  {displayedStatus.detail ? (
+                    <span className="min-w-0 truncate desk-type-meta font-medium text-white/85">{displayedStatus.detail}</span>
+                  ) : null}
+                  {displayedStatus.teamCode ? (
+                    <span className="shrink-0 desk-type-meta font-bold" style={{ color: situationTeamColor }}>
+                      {displayedStatus.teamCode}
+                    </span>
+                  ) : null}
+                  {displayedStatus.score ? (
+                    <span className="shrink-0 rounded bg-white/15 px-1 py-0.5 desk-type-meta font-bold text-white">
+                      {displayedStatus.score}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
           <svg
             className="absolute inset-0 size-full"
-            viewBox="-3 0 111 68"
+            viewBox={mode === "incident" ? "0 -3 68 111" : "-3 0 111 68"}
             preserveAspectRatio="xMidYMid meet"
             aria-hidden="true"
           >
+            <g transform={mode === "incident" ? "translate(68 0) rotate(90)" : undefined}>
             <g fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="0.28">
               <rect x="0.85" y="0.85" width="103.3" height="66.3" />
               <line x1="52.5" y1="0.85" x2="52.5" y2="67.15" />
@@ -118,6 +322,7 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
               <circle cx="52.5" cy="34" r="0.24" />
               <circle cx="11.85" cy="34" r="0.24" />
               <circle cx="93.15" cy="34" r="0.24" />
+            </g>
             </g>
           </svg>
           {actors.map((actor) => {
@@ -199,9 +404,9 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
             );
           })}
           {animatedBall ? (
-            <svg
-              viewBox="0 0 20 20"
-              className="absolute z-20 size-3.5 -translate-x-1/2 -translate-y-1/2 drop-shadow"
+            <FootballIcon
+              size={14}
+              className="absolute z-20 size-3.5 -translate-x-1/2 -translate-y-1/2 drop-shadow text-foreground"
               style={{
                 ...point(animatedBall.x, animatedBall.y),
                 willChange: "left, top",
@@ -209,17 +414,14 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
               role="img"
               aria-label="Ball"
               title="Ball"
-            >
-              <circle cx="10" cy="10" r="8.5" fill="white" stroke="#172018" strokeWidth="1.2" />
-              <path d="m10 5.8 3.4 2.5-1.3 4h-4.2l-1.3-4z" fill="#172018" />
-              <path d="m6.6 8.3-2.7-.9M13.4 8.3l2.7-.9M7.9 12.3l-1.5 2.4M12.1 12.3l1.5 2.4M10 5.8V2.3" fill="none" stroke="#172018" strokeWidth="1.1" />
-            </svg>
+            />
           ) : null}
           {!frame ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/20 px-2 text-center text-[10px] text-white">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 px-2 text-center desk-type-meta text-white">
               {emptyMessage || "Waiting for frame"}
             </div>
           ) : null}
+          </div>
         </div>
       </CardContent>
     </Card>

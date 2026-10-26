@@ -1,3 +1,4 @@
+import { CANVAS_FONT_FAMILY } from "@/lib/typography";
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useMemo } from 'react';
 import * as THREE from 'three';
@@ -266,7 +267,7 @@ function makeAdTexture() {
         ctx.fillStyle = bg;
         ctx.fillRect(i * w, 0, w + 2, H);
         ctx.fillStyle = fg;
-        ctx.font = '700 58px Inter, Helvetica, Arial, sans-serif';
+        ctx.font = `700 58px ${CANVAS_FONT_FAMILY}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, i * w + w / 2, H / 2 + 2);
@@ -290,7 +291,7 @@ function makeRibbonTexture() {
     ctx.fillStyle = '#071615';
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#9af0d2';
-    ctx.font = '600 38px IBM Plex Mono, monospace';
+    ctx.font = `600 38px ${CANVAS_FONT_FAMILY}`;
     ctx.textBaseline = 'middle';
     for (let i = 0; i < 5; i++) {
         ctx.globalAlpha = 0.72;
@@ -319,22 +320,22 @@ function makeScreenTexture() {
     ctx.lineWidth = 3;
     ctx.strokeRect(18, 18, W - 36, H - 36);
     ctx.fillStyle = '#95b9ab';
-    ctx.font = '500 28px IBM Plex Mono, monospace';
+    ctx.font = `500 28px ${CANVAS_FONT_FAMILY}`;
     ctx.fillText('PREMIER LEAGUE · MATCH CENTRE', 50, 76);
     ctx.fillStyle = '#e8f5ee';
-    ctx.font = '700 94px Inter, Helvetica, Arial, sans-serif';
+    ctx.font = `700 94px ${CANVAS_FONT_FAMILY}`;
     ctx.fillText('MCI', 60, 226);
     ctx.fillStyle = '#a7f4d4';
     ctx.fillText('2 : 1', 300, 226);
     ctx.fillStyle = '#ff7f73';
     ctx.fillText('ARS', 610, 226);
     ctx.fillStyle = '#96a9a0';
-    ctx.font = '500 28px IBM Plex Mono, monospace';
+    ctx.font = `500 28px ${CANVAS_FONT_FAMILY}`;
     ctx.fillText('78:32  ·  SECOND HALF  ·  VAR CHECK', 62, 306);
     ctx.fillStyle = 'rgba(183,244,212,.12)';
     ctx.fillRect(50, 352, W - 100, 2);
     ctx.fillStyle = '#d7e8de';
-    ctx.font = '500 25px IBM Plex Mono, monospace';
+    ctx.font = `500 25px ${CANVAS_FONT_FAMILY}`;
     ctx.fillText('INCIDENT REVIEW  ·  SERIOUS FOUL PLAY', 62, 410);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;

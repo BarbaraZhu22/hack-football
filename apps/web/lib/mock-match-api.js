@@ -19,7 +19,7 @@ const MATCH = {
 };
 
 export const MAJOR_EVENT_TYPES = new Set([
-  "goal", "penalty-goal", "penalty-missed", "yellow", "red", "sub", "var",
+  "goal", "penalty-goal", "own-goal", "penalty-missed", "yellow", "red", "sub", "substitution", "var",
 ]);
 export const DECISION_EVENT_TYPES = new Set([
   "foul", "penalty-awarded", "corner-awarded", "offside", "yellow", "red", "warning",
@@ -128,12 +128,19 @@ function playerName(peopleById, id) {
   return id ? peopleById.get(id)?.name ?? null : null;
 }
 
+function isOwnGoal(row) {
+  return row.event_type === "own_goal" || [row.action, row.outcome, row.detail, row.commentary]
+    .some((value) => /own[\s_-]?goal/i.test(value || ""));
+}
+
 function normalizeEventType(row) {
   switch (row.event_type) {
     case "phase": return "phase";
     case "goal":
       if (row.outcome === "disallowed") return "goal-disallowed";
+      if (isOwnGoal(row)) return "own-goal";
       return row.restart_type === "penalty" ? "penalty-goal" : "goal";
+    case "own_goal": return "own-goal";
     case "penalty_attempt": return row.outcome === "saved" ? "penalty-missed" : "penalty-attempt";
     case "card_shown": return row.outcome === "red" ? "red" : "yellow";
     case "substitution": return "sub";
@@ -178,6 +185,7 @@ function createEvent(row, peopleById) {
   if (!label) {
     if (type === "goal") label = `${displayTeamCode} goal`;
     else if (type === "penalty-goal") label = `${displayTeamCode} penalty goal`;
+    else if (type === "own-goal") label = `${displayTeamCode} own goal`;
     else if (type === "goal-disallowed") label = `${displayTeamCode} goal disallowed`;
     else if (type === "penalty-missed") label = `${displayTeamCode} penalty saved`;
     else if (type === "yellow" || type === "red") label = `${playerName(peopleById, playerId)} shown a ${type} card`;
@@ -243,7 +251,7 @@ function createEvent(row, peopleById) {
     decisionLabel,
     decisionDetail: row.decision_detail || "",
     restartType: row.restart_type || "",
-    score: (rawType === "goal" && row.outcome !== "disallowed") || rawType === "phase" ? (row.score || "") : "",
+    score: (["goal", "own_goal"].includes(rawType) && row.outcome !== "disallowed") || rawType === "phase" ? (row.score || "") : "",
     scoreHome: numberOrNull(row.score_home) ?? 0,
     scoreAway: numberOrNull(row.score_away) ?? 0,
     scoreDelta: numberOrNull(row.score_delta) ?? 0,
@@ -468,7 +476,7 @@ function sideAggregate(events, frames, side) {
   const shots = events.filter((event) => event.isShot && event.countInStats && onSide(event));
   const passes = events.filter((event) => event.rawType === "pass" && event.teamCode === code);
   const completedPasses = passes.filter((event) => event.passCompleted);
-  const duels = events.filter((event) => event.rawType === "duel" && event.duelWon && event.teamCode === code);
+  const duels = events.filter((event) => event.duelWon && event.teamCode === code);
   const framesWithPossession = frames.filter((frame) => frame.possession.teamCode);
   const possessionCount = framesWithPossession.filter((frame) => frame.possession.teamCode === code).length;
   const possessionTotal = framesWithPossession.length || 1;
@@ -512,25 +520,114 @@ export function deriveStats(events, frames) {
   ];
 }
 
-export function createMockMomentum(frames) {
-  const lastSecond = frames.at(-1)?.timeSeconds ?? 0;
-  const buckets = Math.max(1, Math.ceil((lastSecond + 1) / 120));
-  const sums = Array.from({ length: buckets }, () => ({ possession: 0, territorial: 0, count: 0 }));
-  for (const frame of frames) {
-    if (!frame.possession.teamCode) continue;
-    const bucket = Math.floor(frame.timeSeconds / 120);
-    const sum = sums[bucket];
-    if (!sum) continue;
-    sum.possession += frame.possession.teamCode === MATCH.home.code ? 1 : -1;
-    const homeAttacksPositiveX = frame.period === 1;
-    const homeProgress = (homeAttacksPositiveX ? frame.ball.x : -frame.ball.x) / 52.5;
-    sum.territorial += Math.max(-1, Math.min(1, homeProgress));
-    sum.count += 1;
+const MOMENTUM_BUCKET_SECONDS = 120;
+const MOMENTUM_WINDOW_SECONDS = 300;
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function momentumEventPressure(event) {
+  if (event.isShot && event.countInStats) {
+    return 0.35
+      + clamp(Number(event.xg) || 0, 0, 1) * 1.6
+      + (event.shotOnTarget ? 0.35 : 0)
+      + (event.scoreDelta > 0 ? 0.4 : 0);
   }
-  return sums.map((sum) => {
-    if (!sum.count) return 0;
-    const value = (sum.possession / sum.count) * 0.7 + (sum.territorial / sum.count) * 0.3;
-    return Math.round(Math.max(-1, Math.min(1, value)) * 100) / 100;
+  if (event.scoreDelta > 0) return 0.75;
+  if (event.rawType === "penalty_awarded") return 0.7;
+  if (event.rawType === "corner_awarded") return 0.2;
+  return 0;
+}
+
+function createPrefix(rows, lastSecond, fields) {
+  const prefix = [Object.fromEntries(fields.map((field) => [field, 0]))];
+  for (let second = 0; second <= lastSecond; second += 1) {
+    const prior = prefix[prefix.length - 1];
+    const row = rows[second];
+    const next = {};
+    for (const field of fields) next[field] = prior[field] + (row?.[field] || 0);
+    prefix.push(next);
+  }
+  return prefix;
+}
+
+export function deriveMomentum(events, frames) {
+  if (!frames.length) return [];
+
+  const lastSecond = Math.max(...frames.map((frame) => frame.timeSeconds));
+  const frameRows = Array.from({ length: lastSecond + 1 }, () => ({
+    possessionHome: 0,
+    possessionAway: 0,
+    finalThirdHome: 0,
+    finalThirdAway: 0,
+  }));
+  for (const frame of frames) {
+    const second = frame.timeSeconds;
+    const teamCode = frame.possession.teamCode;
+    if (!teamCode || second < 0 || second > lastSecond) continue;
+
+    const row = frameRows[second];
+    const homeAttacksPositiveX = frame.period === 1;
+    const homeProgress = clamp((homeAttacksPositiveX ? frame.ball.x : -frame.ball.x) / 52.5, -1, 1);
+    const attackingProgress = teamCode === MATCH.home.code ? homeProgress : -homeProgress;
+    const finalThirdControl = clamp((attackingProgress - 1 / 3) / (2 / 3), 0, 1);
+
+    if (teamCode === MATCH.home.code) {
+      row.possessionHome += 1;
+      row.finalThirdHome += finalThirdControl;
+    } else if (teamCode === MATCH.away.code) {
+      row.possessionAway += 1;
+      row.finalThirdAway += finalThirdControl;
+    }
+  }
+
+  const eventRows = Array.from({ length: lastSecond + 1 }, () => ({ pressureHome: 0, pressureAway: 0 }));
+  for (const event of events) {
+    const second = Math.floor(event.timeMilliseconds / 1000);
+    if (second < 0 || second > lastSecond) continue;
+    const pressure = momentumEventPressure(event);
+    if (!pressure) continue;
+
+    const teamCode = event.teamCode || event.offenderTeamCode;
+    if (teamCode === MATCH.home.code) eventRows[second].pressureHome += pressure;
+    else if (teamCode === MATCH.away.code) eventRows[second].pressureAway += pressure;
+  }
+
+  const frameFields = ["possessionHome", "possessionAway", "finalThirdHome", "finalThirdAway"];
+  const eventFields = ["pressureHome", "pressureAway"];
+  const framePrefix = createPrefix(frameRows, lastSecond, frameFields);
+  const eventPrefix = createPrefix(eventRows, lastSecond, eventFields);
+  const buckets = Math.floor(lastSecond / MOMENTUM_BUCKET_SECONDS) + 1;
+  const rawValues = [];
+
+  for (let bucket = 0; bucket < buckets; bucket += 1) {
+    const end = Math.min((bucket + 1) * MOMENTUM_BUCKET_SECONDS, lastSecond + 1);
+    const start = Math.max(0, end - MOMENTUM_WINDOW_SECONDS);
+    const frameStart = framePrefix[start];
+    const frameEnd = framePrefix[end];
+    const eventStart = eventPrefix[start];
+    const eventEnd = eventPrefix[end];
+
+    const possessionHome = frameEnd.possessionHome - frameStart.possessionHome;
+    const possessionAway = frameEnd.possessionAway - frameStart.possessionAway;
+    const frameCount = possessionHome + possessionAway;
+    const finalThirdHome = frameEnd.finalThirdHome - frameStart.finalThirdHome;
+    const finalThirdAway = frameEnd.finalThirdAway - frameStart.finalThirdAway;
+    const pressureHome = eventEnd.pressureHome - eventStart.pressureHome;
+    const pressureAway = eventEnd.pressureAway - eventStart.pressureAway;
+
+    const possessionEdge = frameCount ? (possessionHome - possessionAway) / frameCount : 0;
+    const territoryEdge = frameCount ? (finalThirdHome - finalThirdAway) / frameCount : 0;
+    const pressureEdge = (pressureHome - pressureAway) / (pressureHome + pressureAway + 2);
+    rawValues.push(clamp(0.2 * possessionEdge + 0.25 * territoryEdge + 0.55 * pressureEdge, -1, 1));
+  }
+
+  return rawValues.map((value, index) => {
+    const previous = rawValues[index - 1] ?? value;
+    const twoBack = rawValues[index - 2] ?? previous;
+    const smoothed = clamp(value * 0.6 + previous * 0.28 + twoBack * 0.12, -1, 1);
+    return Math.round(smoothed * 100) / 100;
   });
 }
 
@@ -598,7 +695,9 @@ export function createMockSnapshot(dataset, throughSeconds = parseClock(DEFAULT_
   const frames = dataset.frames.filter(withinWindow);
   const ratings = dataset.ratings.filter((rating) => rating.timeMilliseconds <= throughSeconds * 1000);
   const allEvents = [...events, ...phases].sort((left, right) => left.timeMilliseconds - right.timeMilliseconds || left.sequence - right.sequence);
-  const timelineEvents = events.filter((event) => event.timelineEvent && MAJOR_EVENT_TYPES.has(event.type));
+  const timelineEvents = events.filter(
+    (event) => (event.timelineEvent || event.type === "sub") && MAJOR_EVENT_TYPES.has(event.type),
+  );
   const decisions = events.filter((event) => event.decision).map(decisionFromEvent);
   const score = scoreAt(allEvents);
   return {
@@ -609,7 +708,7 @@ export function createMockSnapshot(dataset, throughSeconds = parseClock(DEFAULT_
     events,
     timelineEvents,
     decisions,
-    momentum: createMockMomentum(frames),
+    momentum: deriveMomentum(events, frames),
     phases,
     frames,
     ratings,

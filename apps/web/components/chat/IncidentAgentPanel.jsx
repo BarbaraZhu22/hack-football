@@ -118,7 +118,7 @@ function MatchIcon({ status, label }) {
   const Icon = met ? CircleCheck : pending ? CircleHelp : CircleX;
   return (
     <Icon
-      className={`mt-0.5 size-4 shrink-0 ${met ? "text-emerald-600 dark:text-emerald-400" : pending ? "text-muted-foreground" : "text-destructive"}`}
+      className={`mt-0.5 size-4 shrink-0 ${met ? "text-emerald-700" : pending ? "text-muted-foreground" : "text-destructive"}`}
       role="img"
       aria-label={label}
       title={label}
@@ -139,7 +139,7 @@ function AgentResultIcon({ value, kind = "correctness", rationale }) {
 
   return (
     <Icon
-      className={`size-4 shrink-0 ${positive ? "text-emerald-600 dark:text-emerald-400" : negative ? "text-destructive" : "text-muted-foreground"}`}
+      className={`size-4 shrink-0 ${positive ? "text-emerald-700" : negative ? "text-destructive" : "text-muted-foreground"}`}
       role="img"
       aria-label={accessibleLabel}
       title={accessibleLabel}
@@ -155,10 +155,10 @@ function CriterionRow({ criterion, adjudication }) {
       <MatchIcon status={criterion.status} label={met ? "Criterion met" : notAssessed ? "Criterion not assessed" : "Criterion not met"} />
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <span className="text-[11px] font-medium leading-4">{criterion.label}</span>
-          <span className="shrink-0 font-mono text-[9px] text-muted-foreground">{criterion.law}</span>
+          <span className="desk-type-meta font-medium leading-4">{criterion.label}</span>
+          <span className="shrink-0 desk-type-meta text-muted-foreground">{criterion.law}</span>
         </div>
-        <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+        <p className="mt-0.5 desk-type-meta leading-4 text-muted-foreground">
           {criterion.reading}
           <span className={`ml-1 font-medium ${met ? "text-primary" : ""}`}>
             · {met ? "Met" : notAssessed ? "Not assessed" : "Not met"}
@@ -173,9 +173,9 @@ function CriterionRow({ criterion, adjudication }) {
 function ComparisonCard({ title, result, detail, tone }) {
   return (
     <div className="min-w-0 rounded-md border p-2">
-      <p className="text-[10px] font-medium text-muted-foreground">{title}</p>
+      <p className="desk-type-meta font-medium text-muted-foreground">{title}</p>
       <p className={`mt-1 text-xs font-bold ${tone === "analysis" ? "text-primary" : ""}`}>{result}</p>
-      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{detail}</p>
+      <p className="mt-1 desk-type-meta leading-relaxed text-muted-foreground">{detail}</p>
     </div>
   );
 }
@@ -183,8 +183,8 @@ function ComparisonCard({ title, result, detail, tone }) {
 function DecisionFact({ label, value }) {
   return (
     <div className="min-w-0 rounded border bg-muted/20 p-2">
-      <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-[10px] leading-relaxed">{value || "Not recorded"}</p>
+      <p className="desk-type-meta font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 desk-type-meta leading-relaxed">{value || "Not recorded"}</p>
     </div>
   );
 }
@@ -199,21 +199,21 @@ function PrecedentCard({ precedent, adjudication }) {
     <details className="group rounded-md border bg-background px-2.5">
       <summary className="flex cursor-pointer list-none items-start gap-2 py-2.5 [&::-webkit-details-marker]:hidden">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold leading-4">{precedent.fixture || "Historical Premier League case"}</p>
-          <p className="mt-0.5 text-[9px] leading-4 text-muted-foreground">
+          <p className="desk-type-meta font-semibold leading-4">{precedent.fixture || "Historical Premier League case"}</p>
+          <p className="mt-0.5 desk-type-meta leading-4 text-muted-foreground">
             {[precedent.season, precedent.minute, subtype].filter(Boolean).join(" · ")}
           </p>
-          <p className="mt-1 text-[10px] leading-4">{precedent.finalDecision || precedent.final_decision || "Decision not recorded"}</p>
+          <p className="mt-1 desk-type-meta leading-4">{precedent.finalDecision || precedent.final_decision || "Decision not recorded"}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5" title="Current-case consistency from adjudicator">
-          <span className="text-[9px] text-muted-foreground">Consistency</span>
+          <span className="desk-type-meta text-muted-foreground">Consistency</span>
           <AgentResultIcon value={adjudication?.consistency} kind="consistency" rationale={adjudication?.rationale} />
         </div>
       </summary>
       <div className="space-y-2 border-t py-2.5">
         <div>
-          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Facts</p>
-          <p className="mt-0.5 text-[10px] leading-relaxed">{precedent.facts || "No fact summary recorded."}</p>
+          <p className="desk-type-meta font-semibold uppercase tracking-wide text-muted-foreground">Facts</p>
+          <p className="mt-0.5 desk-type-meta leading-relaxed">{precedent.facts || "No fact summary recorded."}</p>
         </div>
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
           <DecisionFact label="On-field decision" value={precedent.onFieldDecision || precedent.on_field_decision} />
@@ -221,23 +221,23 @@ function PrecedentCard({ precedent, adjudication }) {
           <DecisionFact label="Final decision" value={precedent.finalDecision || precedent.final_decision} />
         </div>
         {adjudication?.rationale ? (
-          <div className="rounded-md border border-primary/20 bg-primary/5 p-2">
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Adjudicator rationale</p>
-            <p className="mt-1 text-[10px] leading-relaxed">{adjudication.rationale}</p>
+          <div className="rounded-panel border border-border bg-surface-red-50 p-2">
+            <p className="desk-type-meta font-semibold uppercase tracking-wide text-muted-foreground">Adjudicator rationale</p>
+            <p className="mt-1 desk-type-meta leading-relaxed">{adjudication.rationale}</p>
           </div>
         ) : null}
         <div className="rounded-md bg-muted/30 p-2">
-          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <p className="desk-type-meta font-semibold uppercase tracking-wide text-muted-foreground">
             Historical assessment · {(historicAssessment.status || precedent.assessment_status || "not stated").replaceAll("_", " ")}
           </p>
           {historicAssessment.authority || precedent.assessment_authority ? (
-            <p className="mt-0.5 text-[9px] text-muted-foreground">{historicAssessment.authority || precedent.assessment_authority}</p>
+            <p className="mt-0.5 desk-type-meta text-muted-foreground">{historicAssessment.authority || precedent.assessment_authority}</p>
           ) : null}
-          <p className="mt-1 text-[10px] leading-relaxed">{historicAssessment.summary || precedent.assessment_text || "No separate retrospective assessment recorded."}</p>
+          <p className="mt-1 desk-type-meta leading-relaxed">{historicAssessment.summary || precedent.assessment_text || "No separate retrospective assessment recorded."}</p>
         </div>
         {source.url || precedent.source_url ? (
           <a
-            className="inline-flex text-[10px] font-medium text-primary underline-offset-4 hover:underline"
+            className="inline-flex desk-type-meta font-medium text-primary underline-offset-4 hover:underline"
             href={source.url || precedent.source_url}
             target="_blank"
             rel="noreferrer"
@@ -353,7 +353,7 @@ export default function IncidentAgentPanel() {
     <Card className="flex h-full min-h-0 flex-col overflow-hidden">
       <CardHeader className="shrink-0 border-b py-3">
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">Incident Agent</CardTitle>
+          <CardTitle className="shrink-0 whitespace-nowrap">Incident Agent</CardTitle>
           <div className="inline-flex shrink-0 rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Incident review view">
             <Button
               type="button"
@@ -361,7 +361,7 @@ export default function IncidentAgentPanel() {
               size="sm"
               aria-pressed={activeView === "rules"}
               onClick={() => chooseView("rules")}
-              className="h-7 px-2.5 text-[10px]"
+              className="h-7 px-1.5 desk-type-meta"
             >
               <Scale className="size-3" /> Rules
             </Button>
@@ -371,7 +371,7 @@ export default function IncidentAgentPanel() {
               size="sm"
               aria-pressed={activeView === "precedents"}
               onClick={() => chooseView("precedents")}
-              className="h-7 px-2.5 text-[10px]"
+              className="h-7 px-1.5 desk-type-meta"
             >
               <BookOpen className="size-3" /> Precedents
             </Button>
@@ -385,10 +385,10 @@ export default function IncidentAgentPanel() {
               <div className="space-y-3 p-3">
                 <section>
                   <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <h2 className="inline-flex items-center gap-2 text-xs font-semibold">
+                    <h2 className="desk-type-card inline-flex items-center gap-2">
                       <Scale className="size-3.5 text-primary" /> Rule criteria match
                     </h2>
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="desk-type-meta">
                       {criteria.length ? `${metCount} / ${assessedCount} met` : "Pending"}
                     </Badge>
                   </div>
@@ -403,15 +403,15 @@ export default function IncidentAgentPanel() {
                       ))}
                     </div>
                   ) : (
-                    <p className="rounded-md border p-2 text-[11px] text-muted-foreground">
+                    <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">
                       No rule criteria are available for this incident yet.
                     </p>
                   )}
-                  <p className="mt-1 text-[9px] text-muted-foreground">Right-side status icons show adjudicator validation.</p>
+                  <p className="mt-1 desk-type-meta text-muted-foreground">Right-side status icons show adjudicator validation.</p>
                 </section>
 
                 <section>
-                  <h2 className="mb-1.5 text-xs font-semibold">Analysis vs referee decision</h2>
+                  <h2 className="desk-type-card mb-1.5">Analysis vs referee decision</h2>
                   <div className="grid grid-cols-2 gap-2">
                     <ComparisonCard
                       title="Analysis conclusion"
@@ -430,18 +430,18 @@ export default function IncidentAgentPanel() {
             ) : (
               <div className="space-y-2 p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-xs font-semibold">Comparable cases</h2>
-                  <Badge variant="outline" className="text-[10px]">
+                  <h2 className="desk-type-card">Comparable cases</h2>
+                  <Badge variant="outline" className="desk-type-meta">
                     {precedentStatus === "ready" ? `${precedents.length} cases` : precedentStatus === "loading" ? "Loading" : "Unavailable"}
                   </Badge>
                 </div>
-                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                <p className="desk-type-meta leading-relaxed text-muted-foreground">
                   Historical cases from the same incident category. Consistency with this incident is left for adjudicator review.
                 </p>
                 {precedentStatus === "loading" ? (
-                  <p className="rounded-md border p-2 text-[11px] text-muted-foreground">Loading precedent cases…</p>
+                  <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">Loading precedent cases…</p>
                 ) : precedentStatus === "error" ? (
-                  <p className="rounded-md border p-2 text-[11px] text-destructive">{precedentState.error}</p>
+                  <p className="rounded-md border p-2 desk-type-meta text-destructive">{precedentState.error}</p>
                 ) : precedents.length ? (
                   <div className="space-y-1.5">
                     {precedents.map((precedent) => (
@@ -453,7 +453,7 @@ export default function IncidentAgentPanel() {
                     ))}
                   </div>
                 ) : (
-                  <p className="rounded-md border p-2 text-[11px] text-muted-foreground">
+                  <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">
                     No historical cases are tagged for this incident category yet.
                   </p>
                 )}
@@ -464,7 +464,7 @@ export default function IncidentAgentPanel() {
 
         <section aria-label="Incident questions and answers" className="flex min-h-0 flex-1 flex-col">
           <div className="shrink-0 border-b px-3 py-2">
-            <h2 className="text-xs font-semibold">Chat</h2>
+            <h2 className="desk-type-card">Chat</h2>
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-0">
             <AgentConversation

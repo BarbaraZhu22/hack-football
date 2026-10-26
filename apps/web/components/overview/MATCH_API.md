@@ -34,7 +34,7 @@ Substitutions change both players in the same frame. The outgoing player is off 
 
 ## Player ratings table
 
-`player-ratings.csv` has one row per elapsed second for each player who has entered the match. It links to the corresponding frame and carries the player's active/subbed-off status, current rating, per-second rating delta, the event IDs that changed the rating, a reason code, and a source marker. A rating starts at 6.00 on the player's first active frame and is carried forward on seconds without a rating-changing event. Goals give the scorer a large increase, assists increase the assisting player's score, and saved penalties, saves, cards, shots, passes, duels, fouls, and penalty awards apply smaller event-linked changes. Values are clamped to 4.00–10.00. These are transparent mock ratings for testing the live data contract, not official or agent judgments.
+`player-ratings.csv` has one row per elapsed second for each player who has entered the match. It links to the corresponding frame and carries the player's active/subbed-off status, current rating, per-second rating delta, the event IDs that changed the rating, a reason code, and a source marker. A rating starts at 6.70 on the player's first active frame and is carried forward on seconds without a rating-changing event. Event impacts are scaled to keep ordinary performances near 6.70; good performances reach 7 or above. A player can exceed 8 only after scoring or assisting and then only if their overall performance supports it. A saved penalty or red card caps that player's rating below 5. Ratings remain between 4.00 and 10.00. These are transparent mock ratings for testing the live data contract, not official or agent judgments.
 
 ## Live stream
 

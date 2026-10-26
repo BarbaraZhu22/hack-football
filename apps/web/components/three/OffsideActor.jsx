@@ -1,5 +1,7 @@
 "use client";
 
+import { CANVAS_FONT_FAMILY } from "@/lib/typography";
+
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
@@ -115,16 +117,16 @@ function makeLabel(side, role) {
   ctx.roundRect(26, 36, 18, 152, [28, 0, 0, 28]);
   ctx.fill();
   ctx.fillStyle = "#f4f7f6";
-  ctx.font = "800 64px Inter, Helvetica, Arial, sans-serif";
+  ctx.font = `800 64px ${CANVAS_FONT_FAMILY}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(name, 78, 102);
   ctx.fillStyle = "#a8b5b6";
-  ctx.font = "600 34px Inter, Helvetica, Arial, sans-serif";
+  ctx.font = `600 34px ${CANVAS_FONT_FAMILY}`;
   ctx.fillText(roleLabel.toUpperCase(), 80, 154);
   ctx.textAlign = "right";
   ctx.fillStyle = color;
-  ctx.font = "800 90px Inter, Helvetica, Arial, sans-serif";
+  ctx.font = `800 90px ${CANVAS_FONT_FAMILY}`;
   ctx.fillText(number, 962, 118);
   ctx.fillStyle = "rgba(3,8,10,0.82)";
   ctx.beginPath();

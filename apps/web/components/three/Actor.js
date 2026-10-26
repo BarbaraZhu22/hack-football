@@ -1,3 +1,4 @@
+import { CANVAS_FONT_FAMILY } from "@/lib/typography";
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useLoader, useThree } from '@react-three/fiber';
@@ -29,15 +30,15 @@ function makeLabelTexture(name, number, color, role) {
     ctx.roundRect(26, 36, 18, 152, [r, 0, 0, r]);
     ctx.fill();
     ctx.fillStyle = '#f4f7f6';
-    ctx.font = '800 64px Inter, Helvetica, Arial, sans-serif';
+    ctx.font = `800 64px ${CANVAS_FONT_FAMILY}`;
     ctx.textBaseline = 'middle';
     ctx.fillText(name, 78, 102);
-    ctx.font = '600 34px Inter, Helvetica, Arial, sans-serif';
+    ctx.font = `600 34px ${CANVAS_FONT_FAMILY}`;
     ctx.fillStyle = '#a8b5b6';
     ctx.fillText(role.toUpperCase(), 80, 154);
     ctx.textAlign = 'right';
     ctx.fillStyle = color;
-    ctx.font = '800 90px Inter, Helvetica, Arial, sans-serif';
+    ctx.font = `800 90px ${CANVAS_FONT_FAMILY}`;
     ctx.fillText(number, 962, 118);
     // pointer
     ctx.fillStyle = 'rgba(3,8,10,0.82)';
