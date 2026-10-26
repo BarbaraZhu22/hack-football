@@ -32,10 +32,12 @@ import { MATCH } from "@/lib/incident";
 import { ACTIVE_INCIDENT_ID, INCIDENTS, RATINGS } from "@/lib/incidents";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { buildOffsideSimulation } from "@/lib/offside-simulation";
+import { useIncidentReview } from "@/lib/incident-review-context";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { getBodyModelUrl, getClipUrl } from "@/components/three/actions/catalog";
 import { ContactEnvelope, OffsideEnvelope } from "@/components/pitch/ViewportChrome";
 import Minimap from "@/components/pitch/ViewportMinimap";
+import IncidentTrackingFrame from "@/components/pitch/IncidentTrackingFrame";
 import viewportStyles from "@/components/pitch/ViewportChrome.module.css";
 
 const PitchCanvas = dynamic(() => import("@/components/three/PitchCanvas"), {
@@ -172,6 +174,7 @@ function timecode(time) {
 
 export default function PitchTab() {
   const { state, run } = useScene();
+  const { setReview } = useIncidentReview();
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(0.5);
   const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
@@ -193,6 +196,15 @@ export default function PitchTab() {
     (current, event) => (event.t <= time ? event : current),
     simulation.events[0],
   );
+
+  useEffect(() => {
+    setReview({
+      incident,
+      event: incidentActive ? activeEvent : null,
+      events: incidentActive ? simulation.events : [],
+      assessment: incidentActive && isOffside ? simulation.offside : null,
+    });
+  }, [activeEvent, incident, incidentActive, isOffside, setReview, simulation.events, simulation.offside]);
 
   timeRef.current = time;
 
@@ -380,7 +392,7 @@ export default function PitchTab() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {incidentSwitcher}
@@ -390,11 +402,14 @@ export default function PitchTab() {
           <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:inline-flex">
             <span className="size-2 rounded-full bg-primary" /> Synthetic reconstruction
           </span>
+          <Button size="sm" variant="outline" onClick={freezeContact}>
+            <Snowflake className="mr-1 size-4" /> {isOffside ? "Freeze pass" : "Freeze contact"}
+          </Button>
           <Button size="sm" onClick={playIncident}><Play className="mr-1 size-4" /> Play incident</Button>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_255px]">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_255px]">
         {canWarmAssets && incidentActive ? (
           <SceneErrorBoundary onCrash={handleAssetsReady} fallback={null}>
             <Suspense fallback={null}>
@@ -403,11 +418,11 @@ export default function PitchTab() {
           </SceneErrorBoundary>
         ) : null}
 
-        <div className="flex min-h-0 flex-col gap-3">
-          <Card className="relative aspect-[2/1] min-h-[340px] shrink-0 overflow-hidden border-0 bg-transparent p-0 shadow-none">
+        <div className="flex h-full min-h-0 flex-col gap-3">
+          <Card className="relative min-h-[340px] min-w-0 flex-1 overflow-hidden border-0 bg-transparent p-0 shadow-none">
             {viewportLive ? (
               <SceneSlot label="Incident view">
-                <PitchCanvas sim={simulation} timeRef={timeRef} time={time} onFreeze={freezeContact} viewportParts={STAGE_PARTS} />
+                <PitchCanvas sim={simulation} timeRef={timeRef} time={time} viewportParts={STAGE_PARTS} />
               </SceneSlot>
             ) : null}
           </Card>
@@ -419,7 +434,6 @@ export default function PitchTab() {
                 <Button size="icon" variant="outline" aria-label="Step back one frame" onClick={() => { setPlaying(false); seek(time - 1 / 60); }}><span className="text-sm">−1</span></Button>
                 <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
                 <Button size="icon" variant="outline" aria-label="Step forward one frame" onClick={() => { setPlaying(false); seek(time + 1 / 60); }}><span className="text-sm">+1</span></Button>
-                <Button size="sm" variant="outline" onClick={freezeContact}><Snowflake className="mr-1 size-4" /> {isOffside ? "Freeze pass" : "Freeze contact"}</Button>
                 <span className="ml-1 font-mono text-sm tabular-nums">{timecode(time)}</span>
                 <span className="text-xs text-muted-foreground">of {timecode(simulation.duration)}</span>
                 <div className="ml-auto flex gap-1">
@@ -456,10 +470,10 @@ export default function PitchTab() {
           </Card>
         </div>
 
-        <aside className="flex flex-col gap-3">
+        <aside className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto">
           {isOffside
-            ? <OffsideEnvelope sim={simulation} onFreeze={freezeContact} variant="panel" />
-            : <ContactEnvelope sim={simulation} onFreeze={freezeContact} variant="panel" />}
+            ? <OffsideEnvelope sim={simulation} variant="panel" />
+            : <ContactEnvelope sim={simulation} variant="panel" />}
 
           <div className={`${viewportStyles.insetFrame} ${viewportStyles.insetFramePanel}`}>
             <div className={viewportStyles.contactSceneLayer}>
@@ -492,6 +506,7 @@ export default function PitchTab() {
           </div>
 
           <Minimap sim={simulation} time={time} preset={state.camera.preset} variant="panel" />
+          <IncidentTrackingFrame incident={incident} simulation={simulation} time={time} />
         </aside>
       </div>
     </div>

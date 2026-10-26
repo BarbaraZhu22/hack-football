@@ -8,7 +8,6 @@ import {
   Crosshair,
   Eye,
   EyeOff,
-  Focus,
   Gauge,
   Layers3,
   Move3D,
@@ -39,7 +38,6 @@ export default function ViewportChrome({
   onCamera,
   overlays,
   onOverlay,
-  onFreeze,
   parts,
 }) {
   const offside = sim.kind === "offside";
@@ -116,7 +114,7 @@ export default function ViewportChrome({
         </div>
       )}
 
-      {parts.contact && <ContactEnvelope sim={sim} onFreeze={onFreeze} />}
+      {parts.contact && <ContactEnvelope sim={sim} />}
 
       {parts.minimap && <Minimap sim={sim} time={time} preset={cameraPreset} />}
 
@@ -144,7 +142,7 @@ export default function ViewportChrome({
   );
 }
 
-export function ContactEnvelope({ sim, onFreeze, variant = "viewport" }) {
+export function ContactEnvelope({ sim, variant = "viewport" }) {
   const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
 
   return (
@@ -158,12 +156,11 @@ export function ContactEnvelope({ sim, onFreeze, variant = "viewport" }) {
         <div><span>Severity index</span><b>0.87 <small>/1</small></b></div>
         <div><span>Ball contact</span><b className={styles.danger}>+{Math.round(sim.impact.ballDelay * 1000)} <small>ms</small></b></div>
       </div>
-      <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE CONTACT</button>
     </section>
   );
 }
 
-export function OffsideEnvelope({ sim, onFreeze, variant = "viewport" }) {
+export function OffsideEnvelope({ sim, variant = "viewport" }) {
   const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
   const margin = sim.offside.receiverMargin;
 
@@ -172,11 +169,10 @@ export function OffsideEnvelope({ sim, onFreeze, variant = "viewport" }) {
       <div className={styles.eventCardHead}><Crosshair size={13} /> OFFSIDE REVIEW</div>
       <div className={styles.eventRows}>
         <div><span>Review frame</span><b>PASS RELEASE</b></div>
-        <div><span>Second-last opponent</span><b>BLUE #6</b></div>
+        <div><span>Second-last opponent</span><b>MCI #16</b></div>
         <div><span>Receiver position</span><b className={margin > 0 ? styles.danger : ""}>{margin > 0 ? "OFFSIDE" : "ONSIDE"}</b></div>
         <div><span>Goalward margin</span><b>{margin >= 0 ? "+" : ""}{margin.toFixed(2)} <small>m</small></b></div>
       </div>
-      <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE PASS</button>
     </section>
   );
 }

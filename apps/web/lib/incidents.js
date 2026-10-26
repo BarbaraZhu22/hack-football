@@ -1,3 +1,5 @@
+import { INCIDENT_TRACKING } from "./incident-coordinate-map";
+
 // Registry of controversial decisions under review.
 // Tackle and offside have full 3D reconstructions; the other entries remain
 // placeholders until their scenes are designed and built.
@@ -7,6 +9,7 @@ export const INCIDENTS = [
     label: "Tackle Controversy",
     short: "Tackle",
     minute: "77:38",
+    trackingAnchor: INCIDENT_TRACKING.tackle.clock,
     rating: "red",
     status: "active",
     incidentId: "MCI-ARS-7829-04",
@@ -18,6 +21,7 @@ export const INCIDENTS = [
     label: "Offside Controversy",
     short: "Offside",
     minute: "27:10",
+    trackingAnchor: INCIDENT_TRACKING.offside.clock,
     rating: "amber",
     status: "active",
     incidentId: "MCI-ARS-7829-02",

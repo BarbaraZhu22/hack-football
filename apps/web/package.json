@@ -2,6 +2,7 @@
   "name": "football-web",
   "private": true,
   "scripts": {
+    "generate:precedents": "node scripts/generate-precedents.mjs",
     "generate:match": "node scripts/generate-match.mjs",
     "generate:ratings": "node scripts/generate-player-ratings.mjs",
     "dev": "next dev --hostname 0.0.0.0 --port 3000",

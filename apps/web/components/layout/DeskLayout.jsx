@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, MessageSquare } from "lucide-react";
 
 import AgentChat from "@/components/chat/AgentChat";
+import IncidentAgentPanel from "@/components/chat/IncidentAgentPanel";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,8 @@ export default function DeskLayout({ children }) {
   // The overview desk hosts the agent in its centre column, so the shared
   // right-hand rail is dropped there to avoid two live copies of the chat.
   const showAgentRail = pathname !== "/overview";
+  const isIncidentPage = pathname === "/pitch";
+  const AgentPanel = isIncidentPage ? IncidentAgentPanel : AgentChat;
 
   return (
     <div className="flex min-h-dvh flex-col bg-background lg:h-dvh lg:overflow-hidden">
@@ -41,7 +44,7 @@ export default function DeskLayout({ children }) {
             <span className="inline-flex size-8 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">
               FI
             </span>
-            <span className="hidden sm:inline">Football Interpreter</span>
+            {!isIncidentPage ? <span className="hidden sm:inline">Football Interpreter</span> : null}
           </Link>
 
           <nav className="flex flex-1 items-center gap-1">
@@ -88,11 +91,11 @@ export default function DeskLayout({ children }) {
           showAgentRail && "lg:grid-cols-[minmax(0,1fr)_320px]",
         )}
       >
-        <main className="min-h-0">{children}</main>
+        <main className="h-full min-h-0">{children}</main>
 
         {showAgentRail ? (
-          <aside className="hidden min-h-0 lg:block">
-            <AgentChat />
+          <aside className="hidden h-full min-h-0 lg:block">
+            <AgentPanel />
           </aside>
         ) : null}
       </div>
@@ -108,7 +111,7 @@ export default function DeskLayout({ children }) {
               <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
             </summary>
             <div className={cn("mt-3 h-[420px]")}>
-              <AgentChat />
+              <AgentPanel />
             </div>
           </details>
         </div>

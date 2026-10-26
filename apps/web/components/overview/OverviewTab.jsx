@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
 import AgentPanel from "@/components/overview/AgentPanel";
+import LiveTrackingFrame from "@/components/overview/LiveTrackingFrame";
 import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventTimeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MATCH } from "@/lib/incident";
@@ -435,162 +436,6 @@ function TabSwitch({ value, onChange, options }) {
   );
 }
 
-function PlaybackFrame({ frame, match, people = [] }) {
-  const actors = frame?.actors?.filter((actor) => actor.status === "active") || [];
-  const positionsByPersonId = new Map(people.map((person) => [person.personId, person.position]));
-  const [animatedBall, setAnimatedBall] = useState(frame?.ball || null);
-  const ballPositionRef = useRef(null);
-  const displayedFrameRef = useRef(null);
-  useEffect(() => {
-    if (!frame?.ball) return undefined;
-    const frameKey = frame.frameId || frame.timeMilliseconds;
-    if (frameKey === displayedFrameRef.current) return undefined;
-    displayedFrameRef.current = frameKey;
-
-    const target = { x: frame.ball.x, y: frame.ball.y };
-    const from = ballPositionRef.current;
-    if (!from) {
-      ballPositionRef.current = target;
-      setAnimatedBall(target);
-      return undefined;
-    }
-
-    const dx = target.x - from.x;
-    const dy = target.y - from.y;
-    const span = Math.hypot(dx, dy);
-    const bend = Math.min(1.8, span * 0.045) * (frame.possession?.teamCode === match.home.code ? 1 : -1);
-    const control = span > 0
-      ? { x: (from.x + target.x) / 2 - (dy / span) * bend, y: (from.y + target.y) / 2 + (dx / span) * bend }
-      : target;
-    const startedAt = performance.now();
-    const duration = 900;
-    let animationFrame = 0;
-    const animate = (now) => {
-      const progress = Math.max(0, Math.min(1, (now - startedAt) / duration));
-      const inverse = 1 - progress;
-      const position = {
-        x: inverse * inverse * from.x + 2 * inverse * progress * control.x + progress * progress * target.x,
-        y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * target.y,
-      };
-      ballPositionRef.current = position;
-      setAnimatedBall(position);
-      if (progress < 1) animationFrame = requestAnimationFrame(animate);
-    };
-    animationFrame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [frame?.frameId, frame?.timeMilliseconds, frame?.ball?.x, frame?.ball?.y, frame?.possession?.teamCode, match.home.code]);
-  const viewWidth = 111;
-  const viewHeight = 68;
-  const pitchWidthRatio = (viewWidth / viewHeight) / (16 / 9);
-  const pitchSideGutter = (1 - pitchWidthRatio) / 2;
-  const point = (x, y) => ({
-    left: `${(pitchSideGutter + ((x + 55.5) / viewWidth) * pitchWidthRatio) * 100}%`,
-    top: `${Math.max(1, Math.min(99, ((y + 34) / 68) * 100))}%`,
-  });
-  return (
-    <Card className="shrink-0 overflow-hidden">
-      <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
-        <CardTitle className="text-sm">Live tracking</CardTitle>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
-          <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
-          {frame?.clockLabel || "Waiting for frame"}
-        </span>
-      </CardHeader>
-      <CardContent className="py-2">
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-emerald-800" aria-label="Live player and ball tracking frame">
-          <svg
-            className="absolute inset-0 size-full"
-            viewBox="-3 0 111 68"
-            preserveAspectRatio="xMidYMid meet"
-            aria-hidden="true"
-          >
-            <g fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="0.28">
-              <rect x="0.85" y="0.85" width="103.3" height="66.3" />
-              <line x1="52.5" y1="0.85" x2="52.5" y2="67.15" />
-              <circle cx="52.5" cy="34" r="9.15" />
-              <rect x="0.85" y="13.84" width="16.5" height="40.32" />
-              <rect x="87.65" y="13.84" width="16.5" height="40.32" />
-              <rect x="0.85" y="24.84" width="5.5" height="18.32" />
-              <rect x="98.65" y="24.84" width="5.5" height="18.32" />
-              <path d="M 17.35 26.69 A 9.15 9.15 0 0 1 17.35 41.31" />
-              <path d="M 87.65 26.69 A 9.15 9.15 0 0 0 87.65 41.31" />
-              <path d="M 0.85 1.85 A 1 1 0 0 0 1.85 0.85" />
-              <path d="M 103.15 0.85 A 1 1 0 0 0 104.15 1.85" />
-              <path d="M 0.85 66.15 A 1 1 0 0 1 1.85 67.15" />
-              <path d="M 103.15 67.15 A 1 1 0 0 1 104.15 66.15" />
-              <rect x="-1.59" y="30.34" width="2.44" height="7.32" />
-              <rect x="104.15" y="30.34" width="2.44" height="7.32" />
-            </g>
-            <g fill="rgba(255,255,255,0.82)">
-              <circle cx="52.5" cy="34" r="0.24" />
-              <circle cx="11.85" cy="34" r="0.24" />
-              <circle cx="93.15" cy="34" r="0.24" />
-            </g>
-          </svg>
-          {actors.map((actor) => {
-            const isOfficial = !actor.team;
-            const isGoalkeeper = positionsByPersonId.get(actor.person_id || actor.personId) === "GK";
-            const color = isOfficial
-              ? "#facc15"
-              : actor.team === "MCI"
-                ? match.home.color
-                : match.away.color;
-            const roleLabel = actor.role === "main"
-              ? "Referee"
-              : actor.role === "ar1"
-                ? "Assistant referee 1"
-                : actor.role === "ar2"
-                  ? "Assistant referee 2"
-                  : `${actor.team} #${actor.no}`;
-            const positionStyle = {
-              ...point(actor.x, actor.y),
-              transition: "left 1000ms linear, top 1000ms linear",
-              willChange: "left, top",
-            };
-            return isGoalkeeper ? (
-              <svg
-                key={actor.person_id || actor.personId || actor.role}
-                viewBox="0 0 12 12"
-                className="absolute z-10 size-3 -translate-x-1/2 -translate-y-1/2 drop-shadow-sm"
-                style={positionStyle}
-                role="img"
-                aria-label={roleLabel}
-                title={roleLabel}
-              >
-                <path d="M6 0.8 11.2 11H0.8Z" fill={color} stroke="white" strokeWidth="1.2" />
-              </svg>
-            ) : (
-              <span
-                key={actor.person_id || actor.personId || actor.role}
-                className={`absolute z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-sm ${isOfficial ? "border-amber-100" : "border-white"}`}
-                style={{ ...positionStyle, backgroundColor: color }}
-                title={roleLabel}
-              />
-            );
-          })}
-          {animatedBall ? (
-            <svg
-              viewBox="0 0 20 20"
-              className="absolute z-20 size-3.5 -translate-x-1/2 -translate-y-1/2 drop-shadow"
-              style={{
-                ...point(animatedBall.x, animatedBall.y),
-                willChange: "left, top",
-              }}
-              role="img"
-              aria-label="Ball"
-              title="Ball"
-            >
-              <circle cx="10" cy="10" r="8.5" fill="white" stroke="#172018" strokeWidth="1.2" />
-              <path d="m10 5.8 3.4 2.5-1.3 4h-4.2l-1.3-4z" fill="#172018" />
-              <path d="m6.6 8.3-2.7-.9M13.4 8.3l2.7-.9M7.9 12.3l-1.5 2.4M12.1 12.3l1.5 2.4M10 5.8V2.3" fill="none" stroke="#172018" strokeWidth="1.1" />
-            </svg>
-          ) : null}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
   const [snapshot, setSnapshot] = useState(null);
@@ -769,7 +614,7 @@ export default function OverviewTab() {
         </Card>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <PlaybackFrame frame={currentFrame} match={match} people={matchData.people || []} />
+          <LiveTrackingFrame frame={currentFrame} match={match} people={matchData.people || []} />
           <div className="flex min-h-0 flex-1 flex-col">
             <AgentPanel clock={clock} events={events} phases={phases} match={match} />
           </div>

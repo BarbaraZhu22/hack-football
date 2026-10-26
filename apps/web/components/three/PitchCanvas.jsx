@@ -7,7 +7,7 @@ import { Scene } from "@/components/three/Scene";
 import ViewportChrome from "@/components/pitch/ViewportChrome";
 import { useScene } from "@/lib/scene/SceneProvider";
 
-export default function PitchCanvas({ sim, timeRef, time, onFreeze, viewportParts }) {
+export default function PitchCanvas({ sim, timeRef, time, viewportParts }) {
   const { state, run } = useScene();
   const previousLoaderSetting = useRef(viewportParts.loading);
   const [loaded, setLoaded] = useState(false);
@@ -73,7 +73,6 @@ export default function PitchCanvas({ sim, timeRef, time, onFreeze, viewportPart
         }}
         overlays={state.overlays}
         onOverlay={(key) => run([{ type: "pitch.overlay.set", key, enabled: !state.overlays[key] }])}
-        onFreeze={onFreeze}
         parts={viewportParts}
       />
       {viewportParts.loading && !loaderHidden && (

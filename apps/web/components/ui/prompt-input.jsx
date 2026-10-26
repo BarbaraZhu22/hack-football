@@ -37,9 +37,14 @@ function PromptInput({ className, onSubmit, disabled, placeholder, ...props }) {
         }}
         className="max-h-32 min-h-9 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
       />
-      <Button type="submit" size="icon" disabled={disabled || !value.trim()}>
+      <Button
+        type="submit"
+        size="icon"
+        aria-label="Submit question"
+        title="Submit question"
+        disabled={disabled || !value.trim()}
+      >
         <SendHorizontal />
-        <span className="sr-only">Send</span>
       </Button>
     </form>
   );

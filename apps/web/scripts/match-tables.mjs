@@ -1,3 +1,16 @@
+import { buildSimulation, sampleFrame } from "../lib/incident-simulation.js";
+import { buildOffsideSimulation, sampleOffsideFrame } from "../lib/offside-simulation.js";
+import {
+  INCIDENT_TRACKING,
+  INCIDENT_TRACKING_SAMPLE_STEP,
+  incidentActorMatchPoint,
+  incidentBallMatchPoint,
+  matchSecondAtSimulationTime,
+  roundPitchCoordinate,
+  simulationMatchMilliseconds,
+  simulationTimeAtMatchSecond,
+} from "../lib/incident-coordinate-map.js";
+
 const LIVE_CUTOFF_SECONDS = 78 * 60 + 32;
 const HOME_FORMATION = {
   GK: 31, RB: 2, CB: [3, 25], LB: 24, CM: [17, 19], CDM: 16, LW: 20, ST: 9, RW: 47,
@@ -40,17 +53,6 @@ function stableHash(value) {
   let hash = 2166136261;
   for (const char of value) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
   return hash >>> 0;
-}
-
-function shuffledIndices(length, seed) {
-  const indexes = Array.from({ length }, (_, index) => index);
-  let state = seed >>> 0;
-  for (let index = indexes.length - 1; index > 0; index -= 1) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const swap = state % (index + 1);
-    [indexes[index], indexes[swap]] = [indexes[swap], indexes[index]];
-  }
-  return indexes;
 }
 
 function formatElapsedClock(seconds, half1Seconds, half2Seconds) {
@@ -182,94 +184,228 @@ function activePlayers(people, team, matchSecond, home, half1Seconds) {
   });
 }
 
-function buildPassEvents({ add, people, home, away, half1Seconds, half2Seconds, reservedTimes = [] }) {
-  const current = [
-    { team: home, count: 611, completed: 531, seed: 781, live: true },
-    { team: away, count: 485, completed: 393, seed: 1927, live: true },
-  ];
-  const future = [
-    { team: home, count: 122, completed: 105, seed: 9011, live: false },
-    { team: away, count: 98, completed: 79, seed: 6011, live: false },
-  ];
-  const liveTimes = new Set(reservedTimes);
-  for (const plan of [...current, ...future]) {
-    const endSecond = plan.live ? LIVE_CUTOFF_SECONDS : half1Seconds + half2Seconds;
-    const firstSecond = plan.live ? 0 : LIVE_CUTOFF_SECONDS + 1;
-    const length = endSecond - firstSecond + 1;
-    const completionOrder = shuffledIndices(plan.count, plan.seed);
-    const completedIndices = new Set(completionOrder.slice(0, plan.completed));
-    let possessionGroup = 0;
-    let lastInGroup = null;
-    for (let index = 0; index < plan.count; index += 1) {
-      let matchSecond = firstSecond + Math.floor(((index + 0.5) * length) / plan.count);
-      matchSecond = clamp(matchSecond, firstSecond, endSecond);
-      let searched = 0;
-      while (liveTimes.has(matchSecond)) {
-        matchSecond += 1;
-        if (matchSecond > endSecond) matchSecond = firstSecond;
-        searched += 1;
-        if (searched > length) throw new Error(`No free second remains for ${plan.team} pass event.`);
+function buildPassEvents({ add, events, people, home, away, half1Seconds, half2Seconds }) {
+  const duration = half1Seconds + half2Seconds;
+  const peopleById = new Map(people.filter((person) => !person.role).map((person) => [playerId(person.team, person.no), person]));
+  const originalEvents = [...events];
+  const reservedTimes = new Set(originalEvents.map((event) => event.match_second));
+
+  // A scored goal is followed by a real restart before the open-play state machine resumes.
+  for (const goal of originalEvents.filter((event) => event.event_type === "goal" && event.outcome === "scored")) {
+    let second = Math.min(duration - 2, goal.match_second + 8);
+    while (reservedTimes.has(second) && second < Math.min(duration - 2, goal.match_second + 18)) second += 1;
+    if (reservedTimes.has(second) || second <= goal.match_second) continue;
+    const period = periodForMatchSecond(second, half1Seconds);
+    const kickoffTeam = goal.team_code === home ? away : home;
+    const kickoff = add({
+      period,
+      periodSecond: periodSecondForMatchSecond(second, period, half1Seconds),
+      eventType: "phase",
+      phase: "kick_off",
+      action: "kick_off_after_goal",
+      outcome: "restart_after_goal",
+      teamCode: kickoffTeam,
+      playerId: playerId(kickoffTeam, kickoffTeam === home ? 16 : 41),
+      participantIds: [playerId(kickoffTeam, kickoffTeam === home ? 16 : 41)],
+      detail: `${kickoffTeam} restart after the goal.`,
+      x: 0,
+      y: 0,
+      possessionAfterPlayerId: playerId(kickoffTeam, kickoffTeam === home ? 16 : 41),
+      possessionAfterTeamCode: kickoffTeam,
+    });
+    kickoff._priority = -50;
+    reservedTimes.add(second);
+  }
+
+  const anchorsBySecond = new Map();
+  for (const event of events) {
+    const rows = anchorsBySecond.get(event.match_second) || [];
+    rows.push(event);
+    anchorsBySecond.set(event.match_second, rows);
+  }
+  for (const rows of anchorsBySecond.values()) rows.sort((left, right) => left.sequence - right.sequence);
+
+  const state = { team: home, holder: playerId(home, 16), stopped: false, passes: 0, possessionStartSecond: 0 };
+  let nextActionSecond = 5;
+  const activeOutfield = (team, second) => activePlayers(people, team, second, home, half1Seconds)
+    .filter((person) => person.pos !== "GK");
+  const positionOf = (id, second) => {
+    const person = peopleById.get(id);
+    if (!person) return { x: 0, y: 0 };
+    const period = periodForMatchSecond(second, half1Seconds);
+    return formationSlot(person, person.team, home, away, period, second, half1Seconds, 0.35, false);
+  };
+  const setHolder = (id) => {
+    state.holder = id || "";
+    state.team = teamForPlayerId(id || "") || "";
+    state.stopped = !id;
+  };
+  const ensureController = (expectedId, second) => {
+    const expectedTeam = teamForPlayerId(expectedId);
+    const expectedPlayer = peopleById.get(expectedId);
+    if (!expectedTeam || !expectedPlayer || state.stopped) return null;
+    if (state.holder === expectedId) return null;
+    const period = periodForMatchSecond(second, half1Seconds);
+    const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
+    const currentPlayer = peopleById.get(state.holder);
+    const from = currentPlayer ? positionOf(state.holder, second) : positionOf(expectedId, second);
+    const to = positionOf(expectedId, second);
+    const sameTeam = state.team === expectedTeam;
+    const row = add({
+      period,
+      periodSecond,
+      eventType: sameTeam ? "pass" : "ball_recovery",
+      action: sameTeam ? "completed_pass" : "pressing_recovery",
+      outcome: sameTeam ? "completed" : "won",
+      teamCode: expectedTeam,
+      playerId: sameTeam ? state.holder : expectedId,
+      relatedPlayerId: sameTeam ? expectedId : (state.holder || expectedId),
+      participantIds: [...new Set([state.holder, expectedId])],
+      chainId: `possession-link-${second}-${expectedId}`,
+      passCompleted: sameTeam ? true : undefined,
+      detail: sameTeam
+        ? `${currentPlayer?.name || state.holder} plays a short pass to ${expectedPlayer.name} before the next action.`
+        : `${expectedPlayer.name} wins the ball back before the next action.`,
+      x: from.x,
+      y: from.y,
+      targetX: to.x,
+      targetY: to.y,
+      possessionAfterPlayerId: expectedId,
+      possessionAfterTeamCode: expectedTeam,
+    });
+    row._priority = -100;
+    setHolder(expectedId);
+    state.passes = sameTeam ? state.passes + 1 : 0;
+    return row;
+  };
+  const anchorController = (event) => {
+    if (event.event_type === "pass" || event.event_type === "shot" || event.event_type === "penalty_attempt") return event.player_id;
+    // A challenge is not proof that the defender won the ball. Only explicit recovery
+    // events may transfer possession; a foul is stopped by the following decision.
+    if (event.event_type === "challenge") return "";
+    if (event.event_type === "duel" || event.event_type === "aerial_duel") return "";
+    return "";
+  };
+  const applyAnchor = (event) => {
+    if (event.event_type === "phase") {
+      if (["half_time", "full_time"].includes(event.phase)) setHolder("");
+      else if (["kick_off", "second_half"].includes(event.phase)) {
+        const kickoffTeam = event.team_code || home;
+        setHolder(event.player_id || playerId(kickoffTeam, 16));
       }
-      liveTimes.add(matchSecond);
-      const period = periodForMatchSecond(matchSecond, half1Seconds);
-      const periodSecond = periodSecondForMatchSecond(matchSecond, period, half1Seconds);
-      const active = activePlayers(people, plan.team, matchSecond, home, half1Seconds).filter((person) => person.pos !== "GK");
-      if (index === 0 || index % 5 === 0 || (lastInGroup && lastInGroup.pass_completed !== true)) {
-        possessionGroup += 1;
-        lastInGroup = null;
-      }
-      const chainId = `build-up-${plan.team}-${String(possessionGroup).padStart(3, "0")}`;
-      const previous = lastInGroup;
-      const passer = previous?.pass_completed === true
-        ? active.find((person) => playerId(person.team, person.no) === previous.related_player_id) || active[index % active.length]
-        : active[index % active.length];
-      const completed = completedIndices.has(index);
-      const opponent = plan.team === home ? away : home;
-      const recipients = completed
-        ? active.filter((person) => person.no !== passer.no)
-        : activePlayers(people, opponent, matchSecond, home, half1Seconds).filter((person) => person.pos !== "GK");
-      const location = formationSlot(passer, passer.team, home, away, period, matchSecond, half1Seconds);
-      const nearbyRecipients = recipients
-        .map((person) => ({
-          person,
-          position: formationSlot(person, person.team, home, away, period, matchSecond, half1Seconds),
-        }))
-        .sort((left, right) => {
-          const leftDistance = Math.hypot(left.position.x - location.x, left.position.y - location.y);
-          const rightDistance = Math.hypot(right.position.x - location.x, right.position.y - location.y);
-          return leftDistance - rightDistance || left.person.no - right.person.no;
-        });
-      const recipientPool = nearbyRecipients.slice(0, Math.min(4, nearbyRecipients.length));
-      const recipient = recipientPool[(index * 7 + 3) % recipientPool.length].person;
-      const target = formationSlot(recipient, recipient.team, home, away, period, matchSecond, half1Seconds);
-      const event = add({
-        period,
-        periodSecond,
-        eventType: "pass",
-        action: completed ? "completed_pass" : "attempted_pass",
-        outcome: completed ? "completed" : "intercepted",
-        teamCode: plan.team,
-        playerId: playerId(plan.team, passer.no),
-        relatedPlayerId: playerId(completed ? plan.team : opponent, recipient.no),
-        participantIds: [playerId(plan.team, passer.no), playerId(completed ? plan.team : opponent, recipient.no)],
-        chainId,
-        parentEventId: previous?.event_id || "",
-        passCompleted: completed,
-        detail: completed
-          ? `${passer.name} completes a pass to ${recipient.name}.`
-          : `${passer.name}'s pass is intercepted by ${recipient.name}.`,
-        x: location.x,
-        y: location.y,
-        targetX: target.x,
-        targetY: target.y,
-        possessionAfterPlayerId: playerId(completed ? plan.team : opponent, recipient.no),
-        possessionAfterTeamCode: completed ? plan.team : opponent,
-      });
-      lastInGroup = event;
     }
+    if (event.possession_after_player_id && event.possession_after_team_code) {
+      setHolder(event.possession_after_player_id);
+    } else if (["restart_delivery", "restart_resolution", "save"].includes(event.event_type) && event.related_player_id) {
+      setHolder(event.related_player_id);
+    }
+    const stopsPlay = ["foul_decision", "corner_awarded", "penalty_awarded", "offside_decision", "ball_out"].includes(event.event_type)
+      || event.event_type === "goal" && event.outcome === "scored"
+      || ["shot", "penalty_attempt"].includes(event.event_type) && event.outcome === "wide"
+      || event.event_type === "phase" && ["half_time", "full_time"].includes(event.phase);
+    if (stopsPlay) setHolder("");
+    if (event.event_type === "substitution" && state.holder === event.related_player_id) setHolder(event.player_id);
+    if (event.event_type === "pass") state.passes += event.pass_completed === false ? 0 : 1;
+    if (["ball_recovery", "save", "restart_delivery", "restart_resolution"].includes(event.event_type)) state.passes = 0;
+    if (state.team && event.match_second >= 0) state.possessionStartSecond = event.match_second;
+  };
+  const makeOpenPlayAction = (second) => {
+    if (state.stopped || !state.holder || !state.team) return;
+    const holder = peopleById.get(state.holder);
+    if (!holder || !activeAt(holder, second, home, half1Seconds)) {
+      const candidates = activeOutfield(state.team, second);
+      if (!candidates.length) return;
+      setHolder(playerId(state.team, candidates[0].no));
+    }
+    const current = peopleById.get(state.holder);
+    const opponent = state.team === home ? away : home;
+    const activeTeammates = activeOutfield(state.team, second).filter((person) => playerId(person.team, person.no) !== state.holder);
+    const activeOpponents = activeOutfield(opponent, second);
+    const period = periodForMatchSecond(second, half1Seconds);
+    const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
+    const from = positionOf(state.holder, second);
+    const nearbyTeammates = activeTeammates
+      .map((person) => ({ person, position: positionOf(playerId(person.team, person.no), second) }))
+      .sort((left, right) => Math.hypot(left.position.x - from.x, left.position.y - from.y)
+        - Math.hypot(right.position.x - from.x, right.position.y - from.y));
+    const nearestOpponents = activeOpponents
+      .map((person) => ({ person, position: positionOf(playerId(person.team, person.no), second) }))
+      .sort((left, right) => Math.hypot(left.position.x - from.x, left.position.y - from.y)
+        - Math.hypot(right.position.x - from.x, right.position.y - from.y));
+    const seed = stableHash(`${second}-${state.holder}-open-play`);
+    const possessionAge = second - state.possessionStartSecond;
+    const shouldRecover = state.passes >= 3 && (seed % 100 < 38 || possessionAge > 28);
+    if (shouldRecover && nearestOpponents.length) {
+      const tackler = nearestOpponents[0].person;
+      const tacklerId = playerId(opponent, tackler.no);
+      const recovery = add({
+        period, periodSecond, eventType: "ball_recovery", action: "tackle_recovery", outcome: "won",
+        teamCode: opponent, playerId: tacklerId, relatedPlayerId: state.holder,
+        participantIds: [tacklerId, state.holder], chainId: `recovery-${second}`,
+        duelWon: true, detail: `${tackler.name} presses ${current.name} and wins possession.`,
+        x: from.x, y: from.y, targetX: nearestOpponents[0].position.x, targetY: nearestOpponents[0].position.y,
+        possessionAfterPlayerId: tacklerId, possessionAfterTeamCode: opponent,
+      });
+      setHolder(tacklerId);
+      state.passes = 0;
+      state.possessionStartSecond = second;
+      nextActionSecond = second + 3 + seed % 4;
+      return recovery;
+    }
+    const carry = seed % 100 < 29;
+    if (carry) {
+      const carryEvent = add({
+        period, periodSecond, eventType: "carry", action: seed % 2 ? "progressive_carry" : "retain_possession",
+        outcome: seed % 2 ? "progressed" : "retained", teamCode: state.team,
+        playerId: state.holder, participantIds: [state.holder], chainId: `carry-${second}`,
+        detail: seed % 2 ? `${current.name} carries the ball forward under pressure.` : `${current.name} shields the ball and keeps possession.`,
+        x: from.x, y: from.y, possessionAfterPlayerId: state.holder, possessionAfterTeamCode: state.team,
+      });
+      nextActionSecond = second + 3 + (seed >>> 3) % 5;
+      return carryEvent;
+    }
+    if (!nearbyTeammates.length) return;
+    const receiver = nearbyTeammates[Math.min(nearbyTeammates.length - 1, (seed >>> 4) % Math.min(4, nearbyTeammates.length))];
+    const distanceToReceiver = Math.hypot(receiver.position.x - from.x, receiver.position.y - from.y);
+    const pressured = nearestOpponents.length > 0
+      && Math.hypot(nearestOpponents[0].position.x - from.x, nearestOpponents[0].position.y - from.y) < 8.5;
+    const intercepted = distanceToReceiver > 24 || (pressured && seed % 100 < 13);
+    const target = intercepted && nearestOpponents.length ? nearestOpponents[0] : receiver;
+    const targetId = playerId(target.person.team, target.person.no);
+    const pass = add({
+      period, periodSecond, eventType: "pass", action: intercepted ? "attempted_pass" : "completed_pass",
+      outcome: intercepted ? "intercepted" : "completed", teamCode: state.team, playerId: state.holder,
+      relatedPlayerId: targetId, participantIds: [state.holder, targetId], chainId: `open-pass-${second}`,
+      passCompleted: !intercepted,
+      detail: intercepted
+        ? `${current.name}'s pass is cut out by ${target.person.name}.`
+        : `${current.name} passes to ${target.person.name}.`,
+      x: from.x, y: from.y, targetX: target.position.x, targetY: target.position.y,
+      possessionAfterPlayerId: targetId, possessionAfterTeamCode: target.person.team,
+    });
+    setHolder(targetId);
+    state.passes = intercepted ? 0 : state.passes + 1;
+    if (intercepted) state.possessionStartSecond = second;
+    const expectedFlightSeconds = Math.ceil(distanceToReceiver / 15) + 1;
+    nextActionSecond = second + Math.max(6, expectedFlightSeconds + 1);
+    return pass;
+  };
+
+  for (let second = 0; second <= duration; second += 1) {
+    const anchors = anchorsBySecond.get(second) || [];
+    if (anchors.length) {
+      for (const event of anchors) {
+        const expectedId = anchorController(event);
+        if (expectedId && !state.stopped) ensureController(expectedId, second);
+        applyAnchor(event);
+      }
+      const anchorStartsTransfer = anchors.some((event) => ["pass", "restart_delivery"].includes(event.event_type));
+      nextActionSecond = second + (anchorStartsTransfer ? 7 : 3 + stableHash(`anchor-${second}`) % 5);
+      continue;
+    }
+    if (!reservedTimes.has(second) && second >= nextActionSecond && !state.stopped) makeOpenPlayAction(second);
   }
 }
-
 function addRestartChain({ add, people, peopleById, home, away, half1Seconds, period, second, team, chainId, kind, offenderId = "", fouledId = "", incidentId = "", card = "", description = "" }) {
   const matchSecond = globalSecond(period, second, half1Seconds);
   const direction = team === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
@@ -579,6 +715,15 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   // The offside incident is a complete pass → shot → flag → VAR review → disallowed goal chain.
   const offsideAt = 27 * 60 + 10;
   const offsideLoc = locationFor(away, offsideAt, home, 1, 9);
+  const offsideRecovery = add({
+    period: 1, periodSecond: offsideAt - 4, eventType: "ball_recovery", action: "pressing_recovery", outcome: "won",
+    teamCode: away, playerId: playerId(away, 8), relatedPlayerId: playerId(home, 9),
+    participantIds: [playerId(away, 8), playerId(home, 9)], chainId: "incident-offside",
+    incidentId: "offside", duelWon: true, detail: "Odegaard presses and wins the ball before the transition.",
+    x: offsideLoc.x - 3, y: offsideLoc.y, targetX: offsideLoc.x - 2, targetY: offsideLoc.y,
+    possessionAfterPlayerId: playerId(away, 8), possessionAfterTeamCode: away,
+  });
+  offsideRecovery._priority = -20;
   const offsidePass = add({
     period: 1, periodSecond: offsideAt - 3, eventType: "pass", action: "through_ball", outcome: "completed",
     teamCode: away, playerId: playerId(away, 8), relatedPlayerId: playerId(away, 9),
@@ -586,6 +731,14 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     passCompleted: true, incidentId: "offside", detail: "Odegaard releases Jesus in behind.",
     commentary: "Odegaard threads the ball through for Jesus.", showInCommentary: true,
     x: offsideLoc.x - 4, y: offsideLoc.y, targetX: offsideLoc.x, targetY: offsideLoc.y,
+    possessionAfterPlayerId: playerId(away, 9), possessionAfterTeamCode: away,
+  });
+  add({
+    period: 1, periodSecond: offsideAt - 2, eventType: "carry", action: "first_touch_control",
+    outcome: "controlled_in_stride", teamCode: away, playerId: playerId(away, 9),
+    relatedPlayerId: playerId(away, 8), participantIds: [playerId(away, 9), playerId(away, 8)],
+    chainId: "incident-offside", parentEventId: offsidePass.event_id, incidentId: "offside",
+    detail: "Jesus cushions the through ball into his stride.", x: offsideLoc.x, y: offsideLoc.y,
     possessionAfterPlayerId: playerId(away, 9), possessionAfterTeamCode: away,
   });
   const disallowedShot = add({
@@ -796,6 +949,21 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   const tackleChain = "incident-tackle-77";
   const tackleAt = 31 * 60 + 38;
   const tackleLoc = locationFor(home, globalSecond(2, tackleAt, half1Seconds), home, 2, 24);
+  const tackleRecovery = add({
+    period: 2, periodSecond: tackleAt - 4, eventType: "ball_recovery", action: "tackle_recovery", outcome: "won",
+    teamCode: away, playerId: playerId(away, 7), relatedPlayerId: playerId(home, 8),
+    participantIds: [playerId(away, 7), playerId(home, 8)], chainId: tackleChain,
+    incidentId: "tackle", duelWon: true,
+    detail: "Saka wins the ball from Kovacic and starts the attacking transition.",
+    x: tackleLoc.x, y: tackleLoc.y, possessionAfterPlayerId: playerId(away, 7), possessionAfterTeamCode: away,
+  });
+  tackleRecovery._priority = -20;
+  for (const offset of [3, 2]) add({
+    period: 2, periodSecond: tackleAt - offset, eventType: "carry", action: "progressive_carry",
+    outcome: "progressed", teamCode: away, playerId: playerId(away, 7), participantIds: [playerId(away, 7)],
+    chainId: tackleChain, incidentId: "tackle", detail: "Saka drives forward with the ball as Gvardiol closes him down.",
+    x: tackleLoc.x, y: tackleLoc.y, possessionAfterPlayerId: playerId(away, 7), possessionAfterTeamCode: away,
+  });
   const tackle = add({
     period: 2, periodSecond: tackleAt - 1, eventType: "challenge", action: "sliding_tackle",
     outcome: "foul", teamCode: home, playerId: playerId(home, 24), relatedPlayerId: playerId(away, 7),
@@ -936,13 +1104,14 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
   });
   add({
     period: 1, periodSecond: offsideAt + 9, eventType: "restart_resolution", action: "indirect_free_kick_cleared",
-    outcome: "defender_clears_delivery", teamCode: away, playerId: playerId(home, 3), relatedPlayerId: playerId(away, 6),
+    outcome: "defender_clears_delivery", teamCode: home, playerId: playerId(home, 3), relatedPlayerId: playerId(away, 6),
     participantIds: [playerId(home, 3), playerId(away, 6)], chainId: "incident-offside",
     parentEventId: offsideDelivery.event_id, incidentId: "offside",
     timelineEvent: true,
     detail: "Gabriel wins the aerial challenge and clears De Bruyne's delivery.",
     commentary: "Gabriel heads De Bruyne's free kick clear.", showInCommentary: true,
     x: offsideLoc.x + 4, y: offsideLoc.y + 2,
+    possessionAfterPlayerId: playerId(home, 3), possessionAfterTeamCode: home,
   });
 
   // One ordinary offside call and its indirect-free-kick sequence, then late non-scoring shots.
@@ -987,44 +1156,118 @@ function buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds })
     showInCommentary: true, x: 25, y: 4, targetX: -52, targetY: 0,
     possessionAfterPlayerId: playerId(away, 22), possessionAfterTeamCode: away,
   });
+  const lateTransitionRecovery = add({
+    period: 2, periodSecond: 46 * 60 + 10, eventType: "ball_recovery", action: "pressing_recovery", outcome: "won",
+    teamCode: away, playerId: playerId(away, 7), relatedPlayerId: playerId(home, 20),
+    participantIds: [playerId(away, 7), playerId(home, 20)], chainId: "late-shot-ars",
+    duelWon: true, detail: "Saka wins possession in midfield and turns toward the City goal.",
+    possessionAfterPlayerId: playerId(away, 7), possessionAfterTeamCode: away,
+  });
+  lateTransitionRecovery._priority = -20;
+  for (const periodOffset of [1, 3]) add({
+    period: 2, periodSecond: 46 * 60 + 10 + periodOffset, eventType: "carry", action: "progressive_carry",
+    outcome: "progressed", teamCode: away, playerId: playerId(away, 7), participantIds: [playerId(away, 7)],
+    chainId: "late-shot-ars", detail: "Saka carries forward through the open channel.",
+    possessionAfterPlayerId: playerId(away, 7), possessionAfterTeamCode: away,
+  });
   add({
-    period: 2, periodSecond: 46 * 60 + 10, eventType: "shot", action: "open_play_shot",
+    period: 2, periodSecond: 46 * 60 + 16, eventType: "shot", action: "open_play_shot",
     outcome: "wide", teamCode: away, playerId: playerId(away, 7),
     participantIds: [playerId(away, 7)], chainId: "late-shot-ars",
     isShot: true, shotOnTarget: false, bigChance: false, xg: 0.04,
     detail: "Saka shoots wide from the right side of the box.", commentary: "Saka's late effort goes wide.",
-    showInCommentary: true, x: -38, y: -13, targetX: 52, targetY: 0,
-    possessionAfterPlayerId: playerId(home, 31), possessionAfterTeamCode: home,
+    showInCommentary: true, x: 36, y: 15, targetX: 52.5, targetY: 0,
   });
 
-  // Explicit player duels make the duels-won Overview statistic derivable from event data.
-  const duelWinners = [...Array(54).fill(home), ...Array(46).fill(away)];
-  const duelOrder = shuffledIndices(duelWinners.length, 20917);
-  const orderedWinners = duelOrder.map((index) => duelWinners[index]);
-  orderedWinners.forEach((winnerTeam, index) => {
-    const matchSecond = Math.floor(((index + 0.5) * LIVE_CUTOFF_SECONDS) / orderedWinners.length);
-    const period = periodForMatchSecond(matchSecond, half1Seconds);
-    const periodSecond = periodSecondForMatchSecond(matchSecond, period, half1Seconds);
-    const opponent = winnerTeam === home ? away : home;
-    const winner = activePlayers(people, winnerTeam, matchSecond, home, half1Seconds).filter((person) => person.pos !== "GK")[index % 10];
-    const rival = activePlayers(people, opponent, matchSecond, home, half1Seconds).filter((person) => person.pos !== "GK")[(index * 3) % 10];
-    const at = locationFor(winnerTeam, matchSecond, home, period, index % 5);
+  // Close every late shot with its real outcome and, when it goes wide, a goal-kick restart.
+  for (const shot of [...events].filter((event) => event.event_type === "shot"
+    && event.match_second >= LIVE_CUTOFF_SECONDS && event.outcome === "saved"
+    && !events.some((candidate) => candidate.chain_id === event.chain_id && candidate.event_type === "save"))) {
+    const opponent = shot.team_code === home ? away : home;
+    const keeper = people.find((person) => person.team === opponent && person.pos === "GK");
     add({
-      period, periodSecond, eventType: "duel", action: "contested_duel", outcome: "won",
-      teamCode: winnerTeam, playerId: playerId(winnerTeam, winner.no), relatedPlayerId: playerId(opponent, rival.no),
-      participantIds: [playerId(winnerTeam, winner.no), playerId(opponent, rival.no)],
-      chainId: `duel-${String(index + 1).padStart(3, "0")}`, duelWon: true,
-      detail: `${winner.name} wins a duel against ${rival.name}.`, x: at.x, y: at.y,
+      period: shot.period, periodSecond: shot.period_ms / 1000 + 3, eventType: "save", action: "goalkeeper_save",
+      outcome: "shot_saved", teamCode: opponent, playerId: playerId(opponent, keeper.no), relatedPlayerId: shot.player_id,
+      participantIds: [playerId(opponent, keeper.no), shot.player_id], chainId: shot.chain_id,
+      parentEventId: shot.event_id, countsAsSave: true,
+      detail: `${keeper.name} gathers ${shot.player_id}'s shot.`,
+      possessionAfterPlayerId: playerId(opponent, keeper.no), possessionAfterTeamCode: opponent,
     });
-  });
+  }
+  for (const shot of [...events].filter((event) => event.event_type === "shot"
+    && event.match_second >= LIVE_CUTOFF_SECONDS && event.outcome === "wide")) {
+    const defendingTeam = shot.team_code === home ? away : home;
+    const keeper = people.find((person) => person.team === defendingTeam && person.pos === "GK");
+    const defender = activePlayers(people, defendingTeam, shot.match_second, home, half1Seconds)
+      .find((person) => person.pos === "CB") || keeper;
+    const restartSecond = shot.period_ms / 1000;
+    const chainId = `goal-kick-${shot.event_id}`;
+    const out = add({
+      period: shot.period, periodSecond: restartSecond + 1, eventType: "ball_out", action: "shot_crosses_goal_line",
+      outcome: "goal_kick", teamCode: shot.team_code, awardedTeamCode: defendingTeam,
+      playerId: shot.player_id, relatedPlayerId: playerId(defendingTeam, keeper.no),
+      participantIds: [shot.player_id, playerId(defendingTeam, keeper.no), "OFFICIAL-ar1"],
+      refereeId: "OFFICIAL-ar1", chainId, parentEventId: shot.event_id, restartType: "goal_kick",
+      detail: "The shot goes wide over the goal line; the defending team is awarded a goal kick.",
+      possessionAfterPlayerId: "", possessionAfterTeamCode: "",
+    });
+    const delivery = add({
+      period: shot.period, periodSecond: restartSecond + 9, eventType: "restart_delivery", action: "goal_kick_delivery",
+      outcome: "delivered", teamCode: defendingTeam, playerId: playerId(defendingTeam, keeper.no),
+      relatedPlayerId: playerId(defendingTeam, defender.no), participantIds: [playerId(defendingTeam, keeper.no), playerId(defendingTeam, defender.no)],
+      chainId, parentEventId: out.event_id, restartType: "goal_kick", timelineEvent: true,
+      detail: `${keeper.name} takes the goal kick toward ${defender.name}.`,
+      possessionAfterPlayerId: playerId(defendingTeam, defender.no), possessionAfterTeamCode: defendingTeam,
+    });
+    add({
+      period: shot.period, periodSecond: restartSecond + 11, eventType: "restart_resolution", action: "goal_kick_controlled",
+      outcome: "possession_retained", teamCode: defendingTeam, playerId: playerId(defendingTeam, defender.no),
+      relatedPlayerId: playerId(defendingTeam, keeper.no), participantIds: [playerId(defendingTeam, defender.no), playerId(defendingTeam, keeper.no)],
+      chainId, parentEventId: delivery.event_id, restartType: "goal_kick", timelineEvent: true,
+      detail: `${defender.name} controls the goal kick for ${defendingTeam}.`,
+      possessionAfterPlayerId: playerId(defendingTeam, defender.no), possessionAfterTeamCode: defendingTeam,
+    });
+  }
 
   // Generate detailed pass actions after reserving the incident and set-piece timestamps.
   const reservedTimes = events.map((event) => event.match_second);
-  buildPassEvents({ add, people, home, away, half1Seconds, half2Seconds, reservedTimes });
+  buildPassEvents({ add, events, people, home, away, half1Seconds, half2Seconds });
+  const lateFoulChallenge = events.find((event) => event.chain_id === "foul-22" && event.event_type === "challenge");
+  if (lateFoulChallenge) {
+    const priorPass = events.filter((event) => event.event_type === "pass" && event.team_code === away
+      && event.match_second < lateFoulChallenge.match_second).sort((a, b) => b.match_second - a.match_second)[0];
+    const passerId = priorPass?.related_player_id || playerId(away, 7);
+    const passSecond = lateFoulChallenge.match_second - 1;
+    add({
+      period: 2, periodSecond: periodSecondForMatchSecond(passSecond, 2, half1Seconds),
+      eventType: "pass", action: "short_pass_into_contact", outcome: "completed",
+      teamCode: away, playerId: passerId, relatedPlayerId: lateFoulChallenge.related_player_id,
+      participantIds: [passerId, lateFoulChallenge.related_player_id], chainId: "foul-22-transition",
+      parentEventId: priorPass?.event_id || "", passCompleted: true,
+      detail: "Saka slips the ball into Martinelli ahead of the closing challenge.",
+      possessionAfterPlayerId: lateFoulChallenge.related_player_id, possessionAfterTeamCode: away,
+    });
+  }
+  alignClosingChallengesAfterPasses(events, half1Seconds, half2Seconds);
+  shiftClosingPossessionLinks(events, half1Seconds, half2Seconds);
   add({ period: 2, periodSecond: half2Seconds, eventType: "phase", phase: "full_time", action: "full_time_whistle", outcome: "match_ended", teamCode: "", detail: "Full-time." , clockLabel: "90+3:00" });
+  const fullTimeSecond = half1Seconds + half2Seconds;
+  for (const event of events.filter((candidate) => candidate.match_second === fullTimeSecond && candidate.event_type !== "phase")) {
+    const second = fullTimeSecond - 1;
+    const period = periodForMatchSecond(second, half1Seconds);
+    const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
+    event.match_second = second;
+    event.match_ms = second * 1000;
+    event.period = period;
+    event.period_ms = periodSecond * 1000;
+    event.period_added_seconds = Math.max(0, periodSecond - 45 * 60);
+    event.frame_id = frameId(second);
+    event.clock_label = formatElapsedClock(second, half1Seconds, half2Seconds);
+    event.minute_label = officialMinute(period, periodSecond, half1Seconds);
+  }
 
-  const sorted = events.sort((left, right) => left.match_ms - right.match_ms || left.sequence - right.sequence);
-  sorted.forEach((event, index) => { event.sequence = index + 1; });
+  const sorted = events.sort((left, right) => left.match_ms - right.match_ms || (left._priority ?? 0) - (right._priority ?? 0) || left.sequence - right.sequence);
+  sorted.forEach((event, index) => { delete event._priority; event.sequence = index + 1; });
   let scoreHome = 0;
   let scoreAway = 0;
   for (const event of sorted) {
@@ -1116,7 +1359,7 @@ function sprintOffset(person, matchSecond) {
   const progress = (matchSecond - start) / duration;
   if (progress < 0 || progress > 1) return { x: 0, y: 0 };
   const angle = ((windowSeed >>> 8) % 6284) / 1000;
-  const amplitude = 12.5;
+  const amplitude = 5.5;
   const displacement = amplitude * Math.sin(Math.PI * progress) ** 2;
   return { x: Math.cos(angle) * displacement, y: Math.sin(angle) * displacement };
 }
@@ -1200,41 +1443,10 @@ function playedSeconds(person, { home, half1Seconds, half2Seconds }) {
   return seconds;
 }
 
-function buildMovementProfiles(people, { home, away, half1Seconds, half2Seconds }) {
-  const duration = half1Seconds + half2Seconds;
+function buildMovementProfiles(people) {
   const profiles = new Map();
-  const distanceAtScale = (person, scale) => {
-    let distance = 0;
-    let previous = null;
-    for (let second = 0; second <= duration; second += 1) {
-      if (!activeAt(person, second, home, half1Seconds)) {
-        previous = null;
-        continue;
-      }
-      const period = periodForMatchSecond(second, half1Seconds);
-      const position = outfieldPosition(person, { home, away, period, second, half1Seconds, movementScale: scale });
-      if (previous && previous.period === period && previous.second === second - 1) {
-        distance += Math.hypot(position.x - previous.x, position.y - previous.y);
-      }
-      previous = { ...position, period, second };
-    }
-    return distance;
-  };
   for (const person of people.filter((item) => !item.role && item.pos !== "GK")) {
-    const activeSeconds = playedSeconds(person, { home, half1Seconds, half2Seconds });
-    const targetDistance = distanceTargetKmPer90(person) * activeSeconds / (90 * 60) * 1000;
-    let low = 0;
-    let high = 5;
-    for (let attempt = 0; attempt < 22; attempt += 1) {
-      const middle = (low + high) / 2;
-      if (distanceAtScale(person, middle) < targetDistance) low = middle;
-      else high = middle;
-    }
-    profiles.set(playerId(person.team, person.no), {
-      targetKmPer90: distanceTargetKmPer90(person),
-      targetDistanceKm: targetDistance / 1000,
-      amplitudeScale: (low + high) / 2,
-    });
+    profiles.set(playerId(person.team, person.no), { amplitudeScale: 1.65 });
   }
   return profiles;
 }
@@ -1242,25 +1454,42 @@ function buildMovementProfiles(people, { home, away, half1Seconds, half2Seconds 
 function summarizePlayerMovement(frames) {
   const summaries = new Map();
   const previous = new Map();
+  const previousWholeSecond = new Map();
   for (const frame of frames) {
     for (const actor of JSON.parse(frame.actors)) {
       const id = actor.person_id;
       if (!actor.team || actor.status !== "active") {
         previous.delete(id);
+        previousWholeSecond.delete(id);
         continue;
       }
       const summary = summaries.get(id) || { distance: 0, liveDistance: 0, seconds: 0, peakSpeed: 0, sprintSamples: 0 };
       const prior = previous.get(id);
-      if (prior && prior.period === frame.period && prior.second === frame.match_second - 1) {
-        const speed = Math.hypot(actor.x - prior.x, actor.y - prior.y);
-        summary.distance += speed;
-        if (frame.match_second <= LIVE_CUTOFF_SECONDS) summary.liveDistance += speed;
-        summary.seconds += 1;
+      const elapsedSeconds = prior ? (Number(frame.match_ms) - prior.matchMs) / 1000 : 0;
+      if (prior && prior.period === frame.period && elapsedSeconds > 0) {
+        const distance = Math.hypot(actor.x - prior.x, actor.y - prior.y);
+        const speed = distance / elapsedSeconds;
+        summary.distance += distance;
+        if (frame.match_second <= LIVE_CUTOFF_SECONDS) summary.liveDistance += distance;
+        summary.seconds += elapsedSeconds;
         summary.peakSpeed = Math.max(summary.peakSpeed, speed);
-        if (speed >= 25 / 3.6) summary.sprintSamples += 1;
+      }
+      if (Number.isInteger(Number(frame.match_second))) {
+        const wholeSecondPrior = previousWholeSecond.get(id);
+        if (wholeSecondPrior && wholeSecondPrior.period === frame.period
+          && Number(frame.match_second) === wholeSecondPrior.second + 1) {
+          const speed = Math.hypot(actor.x - wholeSecondPrior.x, actor.y - wholeSecondPrior.y);
+          if (speed >= 25 / 3.6) summary.sprintSamples += 1;
+        }
+        previousWholeSecond.set(id, {
+          x: actor.x,
+          y: actor.y,
+          period: frame.period,
+          second: Number(frame.match_second),
+        });
       }
       summaries.set(id, summary);
-      previous.set(id, { x: actor.x, y: actor.y, period: frame.period, second: frame.match_second });
+      previous.set(id, { x: actor.x, y: actor.y, period: frame.period, matchMs: Number(frame.match_ms) });
     }
   }
   return summaries;
@@ -1325,6 +1554,13 @@ export function buildPlayerRatings(events, frames, people) {
       case "pass":
         add(player, event.pass_completed === true || event.pass_completed === "true" ? 0.004 : -0.02,
           event.pass_completed === true || event.pass_completed === "true" ? "pass_completed" : "pass_lost");
+        break;
+      case "carry":
+        add(player, 0.006, "ball_carry");
+        break;
+      case "ball_recovery":
+        add(player, 0.045, "ball_recovery");
+        add(related, -0.025, "possession_lost");
         break;
       case "duel":
       case "aerial_duel":
@@ -1459,6 +1695,7 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
     ar2: { x: -2, y: 34 },
   };
   const previousGoalkeepers = new Map();
+  const previousOutfieldPositions = new Map();
   let lastPossession = { team: home, id: playerId(home, 16) };
   const rosterPeople = people.filter((person) => !person.role);
   const distance = (left, right) => Math.hypot(right.x - left.x, right.y - left.y);
@@ -1469,13 +1706,24 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * to.y,
     };
   };
+  const pointToSegmentDistance = (point, start, end) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    const progress = lengthSquared
+      ? clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1)
+      : 0;
+    return distance(point, { x: start.x + dx * progress, y: start.y + dy * progress });
+  };
+  const distanceToPolyline = (point, points) => Math.min(...points.slice(1).map((sample, index) =>
+    pointToSegmentDistance(point, points[index], sample)));
   const attackingGoalX = (team, period) => (team === home) === (period === 1) ? 52.5 : -52.5;
   const stoppageTypes = new Set([
     "foul_decision", "corner_awarded", "penalty_awarded", "offside_decision", "ball_out",
   ]);
   const interactionTypes = new Set([
-    "pass", "shot", "penalty_attempt", "save", "block", "challenge", "duel", "aerial_duel",
-    "restart_delivery", "restart_resolution", "handball_contact",
+    "pass", "carry", "ball_recovery", "shot", "penalty_attempt", "save", "block", "aerial_duel",
+    "restart_delivery", "restart_resolution", "handball_contact", "substitution",
   ]);
   for (let second = 0; second <= duration; second += 1) {
     const period = periodForMatchSecond(second, half1Seconds);
@@ -1492,8 +1740,9 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
           ballFlight = null;
           lastPossession = { team: "", id: "" };
         } else if (["kick_off", "second_half"].includes(event.phase)) {
+          const kickoffTeam = event.team_code || home;
           ballStopped = false;
-          lastPossession = { team: home, id: playerId(home, 16) };
+          lastPossession = { team: kickoffTeam, id: event.player_id || playerId(kickoffTeam, 16) };
           lastBallInteractionEventId = event.event_id;
         }
       }
@@ -1504,6 +1753,10 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       }
       if (["pass", "restart_delivery"].includes(event.event_type)) {
         ballStopped = false;
+      }
+      if (event.event_type === "carry") {
+        ballStopped = false;
+        ballFlight = null;
       }
       if (interactionTypes.has(event.event_type)) {
         ballStopped = false;
@@ -1520,11 +1773,16 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
         lastPossession = { team: receiverTeam || event.team_code, id: event.related_player_id };
       }
       if (event.event_type === "phase" && event.phase === "second_half") {
-        lastPossession = { team: home, id: playerId(home, 16) };
+        lastPossession = { team: event.team_code || home, id: event.player_id || playerId(event.team_code || home, 16) };
       }
       if (event.event_type === "substitution" && lastPossession.id === event.related_player_id) {
         lastPossession = { team: event.team_code, id: event.player_id };
       }
+    }
+    if (currentEvents.some((event) => event.event_type === "goal" && event.outcome === "scored")) {
+      lastPossession = { team: "", id: "" };
+      ballStopped = true;
+      ballFlight = null;
     }
     if (!ballStopped && lastPossession.id) {
       const possessor = rosterPeople.find((person) => playerId(person.team, person.no) === lastPossession.id);
@@ -1536,7 +1794,26 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
         lastPossession = fallback ? { team: fallback.team, id: playerId(fallback.team, fallback.no) } : { team: "", id: "" };
       }
     }
-    const possPerson = rosterPeople.find((person) => playerId(person.team, person.no) === lastPossession.id);
+    const basePositions = new Map();
+    const pressingPlayers = new Set();
+    const attackingDirection = (team) => team === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+    for (const team of [home, away]) {
+      const defenders = rosterPeople.filter((person) => person.team === team && person.pos !== "GK"
+        && activeAt(person, second, home, half1Seconds));
+      for (const person of defenders) {
+        const profile = movementProfiles.get(playerId(team, person.no));
+        basePositions.set(playerId(team, person.no), outfieldPosition(person, {
+          home, away, period, second, half1Seconds, movementScale: profile?.amplitudeScale ?? 0.55,
+        }));
+      }
+      if (lastPossession.team && team !== lastPossession.team) {
+        const pressers = defenders.filter((person) => !["ST", "LW", "RW", "W"].includes(person.pos))
+          .sort((left, right) => distance(basePositions.get(playerId(team, left.no)), previousBall)
+            - distance(basePositions.get(playerId(team, right.no)), previousBall))
+          .slice(0, 2);
+        pressers.forEach((person) => pressingPlayers.add(playerId(team, person.no)));
+      }
+    }
     let ball = { ...previousBall, z: 0 };
     const actors = rosterPeople.map((person) => {
       const id = playerId(person.team, person.no);
@@ -1546,14 +1823,50 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       let pos = active ? baseSlot : { x: person.team === home ? -8 - (person.no % 9) * 2 : 8 + (person.no % 9) * 2, y: 36.5 };
       if ((active || person.team === home && person.no === 19) && person.pos !== "GK") {
         const profile = movementProfiles.get(id);
-        pos = outfieldPosition(person, {
-          home,
-          away,
-          period,
-          second,
-          half1Seconds,
-          movementScale: profile?.amplitudeScale ?? 1,
+        pos = basePositions.get(id) || outfieldPosition(person, {
+          home, away, period, second, half1Seconds, movementScale: profile?.amplitudeScale ?? 0.55,
         });
+        const substitution = currentEvents.find((event) => event.event_type === "substitution" && event.player_id === id);
+        const outgoingPosition = substitution ? previousOutfieldPositions.get(substitution.related_player_id) : null;
+        if (outgoingPosition) pos = { x: outgoingPosition.x, y: outgoingPosition.y };
+        const lineShiftX = clamp(previousBall.x * 0.20, -11, 11);
+        const lateralShiftY = clamp(previousBall.y * 0.18, -5.8, 5.8);
+        const direction = attackingDirection(person.team);
+        const attackProgress = clamp((previousBall.x * direction + 48) / 96, 0, 1);
+        const frontPlayer = ["ST", "LW", "RW", "W"].includes(person.pos);
+        if (lastPossession.team === person.team) {
+          const forwardRun = ({ ST: 3.2, LW: 2.6, RW: 2.6, W: 2.4, RB: 1.8, LB: 1.8, FB: 1.8, CM: 1.4, CDM: 0.6, CB: 0.2 })[person.pos] ?? 0.6;
+          pos = { x: pos.x + lineShiftX + direction * forwardRun * attackProgress, y: pos.y + lateralShiftY };
+          if (["LW", "RW", "W"].includes(person.pos)) pos.y += Math.sign(pos.y || (person.no % 2 ? 1 : -1)) * 2.2;
+        } else {
+          pos = {
+            x: pos.x + lineShiftX * (frontPlayer ? 0.38 : 1),
+            y: pos.y * 0.91 + lateralShiftY,
+          };
+          if (pressingPlayers.has(id)) {
+            const dx = previousBall.x - pos.x;
+            const dy = previousBall.y - pos.y;
+            const span = Math.hypot(dx, dy) || 1;
+            const desiredGap = 3.8 + (stableHash(id) % 25) / 10;
+            pos = {
+              x: pos.x + dx / span * Math.max(0, span - desiredGap) * 0.55,
+              y: pos.y + dy / span * Math.max(0, span - desiredGap) * 0.55,
+            };
+          }
+        }
+        pos = { x: clamp(pos.x, -50, 50), y: clamp(pos.y, -32, 32) };
+        if (active) {
+          const prior = previousOutfieldPositions.get(id);
+          if (prior?.period === period) {
+            const dx = pos.x - prior.x;
+            const dy = pos.y - prior.y;
+            const travel = Math.hypot(dx, dy);
+            const maxStep = pressingPlayers.has(id) ? 8.4 : id === lastPossession.id ? 8.0 : 7.5;
+            const scale = travel > maxStep ? maxStep / travel : 1;
+            pos = { x: prior.x + dx * scale, y: prior.y + dy * scale };
+          }
+          previousOutfieldPositions.set(id, { x: pos.x, y: pos.y, period });
+        }
       }
       if (active && person.pos === "GK") {
         const goalDirection = person.team === home
@@ -1640,9 +1953,8 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
         ? actorPosition(shotEvent.goalkeeper_id || lastPossession.id)
         : null;
       const shotAtGoal = Boolean(shotEvent && ["goal", "goal_disallowed", "blocked_out_for_corner", "scored"].includes(shotEvent.outcome));
-      const interactionEvent = [...currentEvents].reverse().find((event) => interactionTypes.has(event.event_type)
-        && (["pass", "restart_delivery"].includes(event.event_type)
-          || JSON.parse(event.participant_ids).includes(lastPossession.id))) || kickoffEvent;
+      const interactionEvent = [...currentEvents].reverse().find((event) => ["pass", "ball_recovery", "restart_delivery", "restart_resolution", "block", "save", "shot", "penalty_attempt", "substitution"].includes(event.event_type)
+        && JSON.parse(event.participant_ids).includes(lastPossession.id)) || kickoffEvent;
       const targetPlayerId = ["pass", "restart_delivery"].includes(interactionEvent?.event_type)
         ? interactionEvent.related_player_id || lastPossession.id
         : shotTarget ? shotEvent.goalkeeper_id || lastPossession.id : lastPossession.id;
@@ -1650,8 +1962,8 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       const destination = shotTarget
         || (shotAtGoal ? { x: attackingGoalX(shotEvent.team_code, period) * 0.995, y: 0 } : targetPosition);
       const startsFlight = possessionChanged || Boolean(shotTarget) || shotAtGoal || Boolean(kickoffEvent)
-        || currentEvents.some((event) => ["pass", "restart_delivery"].includes(event.event_type)
-          || interactionTypes.has(event.event_type) && JSON.parse(event.participant_ids).includes(lastPossession.id));
+        || currentEvents.some((event) => ["pass", "ball_recovery", "restart_delivery", "restart_resolution", "block", "save", "substitution"].includes(event.event_type)
+          && JSON.parse(event.participant_ids).includes(lastPossession.id));
       if (startsFlight) {
         const from = { x: previousBall.x, y: previousBall.y };
         const to = { x: destination.x, y: destination.y };
@@ -1669,7 +1981,7 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
           control,
           to,
           startSecond: second - 1,
-          duration: Math.max(1, Math.ceil(routeLength / 5)),
+          duration: Math.max(1, Math.ceil(routeLength / 16)),
           targetPlayerId: shotTarget ? shotEvent.goalkeeper_id || lastPossession.id : shotAtGoal ? `GOAL-${shotEvent.team_code}` : targetPlayerId,
           fromPlayerId: interactionEvent?.player_id || possessionBefore,
           eventId: interactionEvent?.event_id || lastBallInteractionEventId,
@@ -1698,7 +2010,7 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
               const deltaY = to.y - from.y;
               const span = Math.hypot(deltaX, deltaY);
               const side = stableHash(ballFlight.eventId || `${second}-${ballFlight.targetPlayerId}`) % 2 ? 1 : -1;
-              const bend = Math.min(1.7, Math.max(0.25, span * 0.035)) * side;
+              const bend = Math.min(1.1, Math.max(0.2, span * 0.025)) * side;
               const control = span > 0
                 ? { x: (from.x + to.x) / 2 - (deltaY / span) * bend, y: (from.y + to.y) / 2 + (deltaX / span) * bend }
                 : { ...from };
@@ -1709,16 +2021,11 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
                 control,
                 to,
                 startSecond: second,
-                duration: Math.max(1, Math.ceil(routeLength / 5)),
+                duration: Math.max(1, Math.ceil(routeLength / 16)),
               };
             } else {
-              if (holderPosition) {
-                const attackDirection = lastPossession.team === home
-                  ? (period === 1 ? 1 : -1)
-                  : (period === 1 ? -1 : 1);
-                ball = { x: holderPosition.x + attackDirection * 0.65, y: holderPosition.y, z: 0 };
-                ballMotion = "controlled";
-              }
+              if (movingTarget) ball = { ...movingTarget, z: 0 };
+              ballMotion = "controlled";
               ballFlight = null;
             }
           }
@@ -1763,14 +2070,66 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       } else if (playerPosition && relatedPosition && ["challenge", "duel", "block", "aerial_duel", "handball_contact"].includes(event.event_type)) {
         event.location_x = round2((playerPosition.x + relatedPosition.x) / 2);
         event.location_y = round2((playerPosition.y + relatedPosition.y) / 2);
+      } else if (event.event_type === "carry" && playerPosition) {
+        event.location_x = playerPosition.x;
+        event.location_y = playerPosition.y;
+      } else if (event.event_type === "ball_recovery" && playerPosition) {
+        if (relatedPosition) {
+          event.location_x = relatedPosition.x;
+          event.location_y = relatedPosition.y;
+        }
+        event.target_x = playerPosition.x;
+        event.target_y = playerPosition.y;
       } else if (playerPosition && event.location_x !== "" && event.location_y !== "") {
         event.location_x = playerPosition.x;
         event.location_y = playerPosition.y;
       }
     }
     previousBall = ball;
+    const attackDirection = attackingDirection(lastPossession.team || home);
+    const mainRefSide = ball.y > 21 ? -1 : ball.y < -21 ? 1 : previousOfficials.main.y >= 0 ? 1 : -1;
+    const preferredMainTarget = {
+      x: clamp(ball.x - attackDirection * 5, -48, 48),
+      y: clamp(ball.y + mainRefSide * 8, -31, 31),
+    };
+    let mainTarget = preferredMainTarget;
+    let activePassRoute = null;
+    if (ballFlight && ballFlight.motion === "transfer" && !ballToPlayerId.startsWith("GOAL-")) {
+      const passer = actorPosition(ballFromPlayerId);
+      const receiver = actorPosition(ballToPlayerId);
+      if (passer && receiver) {
+        activePassRoute = Array.from({ length: 25 }, (_, index) => {
+          const progress = index / 24;
+          return {
+            x: passer.x + (receiver.x - passer.x) * progress,
+            y: passer.y + (receiver.y - passer.y) * progress,
+          };
+        });
+      }
+    }
+    if (activePassRoute) {
+      const activePlayerPositions = actors.filter((actor) => actor.status === "active")
+        .map((actor) => ({ x: actor.x, y: actor.y }));
+      const candidates = [];
+      for (let angle = 0; angle < 360; angle += 15) {
+        const radians = angle * Math.PI / 180;
+        const candidate = {
+          x: clamp(ball.x + Math.cos(radians) * 10.5, -48, 48),
+          y: clamp(ball.y + Math.sin(radians) * 10.5, -31, 31),
+        };
+        const routeClearance = distanceToPolyline(candidate, activePassRoute);
+        const playerClearance = Math.min(...activePlayerPositions.map((position) => distance(candidate, position)));
+        const movementCost = distance(candidate, previousOfficials.main);
+        const shapeCost = distance(candidate, preferredMainTarget) * 0.35;
+        const routePenalty = Math.max(0, 8 - routeClearance) ** 2 * 4;
+        const playerPenalty = Math.max(0, 4.5 - playerClearance) ** 2 * 0.7;
+        candidates.push({ point: candidate, score: movementCost + shapeCost + routePenalty + playerPenalty });
+      }
+      candidates.sort((left, right) => left.score - right.score);
+      if (candidates.length) mainTarget = candidates[0].point;
+    }
     const officialTargets = {
-      main: { x: clamp(ball.x - 4, -48, 48), y: clamp(ball.y * 0.35, -31, 31) },
+      main: mainTarget,
       ar1: { x: clamp(ball.x + 4, -48, 48), y: -34 },
       ar2: { x: clamp(ball.x - 2, -48, 48), y: 34 },
     };
@@ -1778,9 +2137,26 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
       const previous = previousOfficials[role];
       const dx = target.x - previous.x;
       const dy = target.y - previous.y;
-      const distance = Math.hypot(dx, dy);
-      const scale = distance > 7.2 ? 7.2 / distance : 1;
-      const position = { x: round2(previous.x + dx * scale), y: round2(previous.y + dy * scale) };
+      const travel = Math.hypot(dx, dy);
+      const scale = travel > 7.2 ? 7.2 / travel : 1;
+      let position = { x: round2(previous.x + dx * scale), y: round2(previous.y + dy * scale) };
+      if (role === "main" && activePassRoute && distanceToPolyline(position, activePassRoute) < 7) {
+        let escape = position;
+        let escapeScore = distanceToPolyline(position, activePassRoute) - distance(position, target) * 0.05;
+        for (let angle = 0; angle < 360; angle += 10) {
+          const radians = angle * Math.PI / 180;
+          const candidate = {
+            x: round2(clamp(previous.x + Math.cos(radians) * 7.2, -48, 48)),
+            y: round2(clamp(previous.y + Math.sin(radians) * 7.2, -31, 31)),
+          };
+          const candidateScore = distanceToPolyline(candidate, activePassRoute) - distance(candidate, target) * 0.05;
+          if (candidateScore > escapeScore) {
+            escape = candidate;
+            escapeScore = candidateScore;
+          }
+        }
+        position = escape;
+      }
       previousOfficials[role] = position;
       return { person_id: `OFFICIAL-${role}`, role, status: "active", ...position, z: 0 };
     });
@@ -1807,25 +2183,872 @@ function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, m
     };
     frames.push(frame);
   }
-  for (const [id, profile] of movementProfiles) {
-    let totalDistance = 0;
-    let previous = null;
-    for (const frame of frames) {
-      const actor = JSON.parse(frame.actors).find((item) => item.person_id === id && item.status === "active");
-      if (!actor) {
-        previous = null;
-        continue;
-      }
-      if (previous && previous.period === frame.period && previous.second === frame.match_second - 1) {
-        totalDistance += Math.hypot(actor.x - previous.x, actor.y - previous.y);
-      }
-      previous = { x: actor.x, y: actor.y, period: frame.period, second: frame.match_second };
+  return frames;
+}
+
+function shiftClosingPossessionLinks(events, half1Seconds, half2Seconds) {
+  const actionTimes = new Set(events.filter((event) => event.match_second >= LIVE_CUTOFF_SECONDS
+    && ["pass", "shot", "penalty_attempt"].includes(event.event_type))
+    .map((event) => `${event.match_second}:${event.player_id}`));
+  for (const event of events) {
+    if (event.match_second < LIVE_CUTOFF_SECONDS || !event.chain_id.startsWith("possession-link-")) continue;
+    if (!actionTimes.has(`${event.match_second}:${event.related_player_id}`)) continue;
+    const routeLength = event.event_type === "pass" && event.location_x !== "" && event.target_x !== ""
+      ? Math.hypot(Number(event.target_x) - Number(event.location_x), Number(event.target_y) - Number(event.location_y))
+      : 0;
+    const second = event.match_second - Math.max(1, Math.ceil(routeLength / 17.5));
+    if (second < LIVE_CUTOFF_SECONDS) continue;
+    const period = periodForMatchSecond(second, half1Seconds);
+    const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
+    event.match_second = second;
+    event.match_ms = second * 1000;
+    event.period = period;
+    event.period_ms = periodSecond * 1000;
+    event.period_added_seconds = Math.max(0, periodSecond - 45 * 60);
+    event.frame_id = frameId(second);
+    event.clock_label = formatElapsedClock(second, half1Seconds, half2Seconds);
+    event.minute_label = officialMinute(period, periodSecond, half1Seconds);
+  }
+}
+
+function alignClosingChallengesAfterPasses(events, half1Seconds, half2Seconds) {
+  const retime = (event, second) => {
+    const period = periodForMatchSecond(second, half1Seconds);
+    const periodSecond = periodSecondForMatchSecond(second, period, half1Seconds);
+    event.match_second = second;
+    event.match_ms = second * 1000;
+    event.period = period;
+    event.period_ms = periodSecond * 1000;
+    event.period_added_seconds = Math.max(0, periodSecond - 45 * 60);
+    event.frame_id = frameId(second);
+    event.clock_label = formatElapsedClock(second, half1Seconds, half2Seconds);
+    event.minute_label = officialMinute(period, periodSecond, half1Seconds);
+  };
+  const shiftedChains = new Set();
+  for (const challenge of events.filter((event) => event.match_second >= LIVE_CUTOFF_SECONDS
+    && event.event_type === "challenge" && event.outcome === "foul")) {
+    const linkedPass = events.find((event) => event.match_second === challenge.match_second
+      && event.event_type === "pass" && event.chain_id.startsWith("possession-link-")
+      && event.related_player_id === challenge.related_player_id);
+    if (!linkedPass || shiftedChains.has(challenge.chain_id)) continue;
+    const length = Math.hypot(Number(linkedPass.target_x) - Number(linkedPass.location_x),
+      Number(linkedPass.target_y) - Number(linkedPass.location_y));
+    const delay = Math.max(1, Math.ceil(length / 17.5));
+    for (const event of events.filter((candidate) => candidate.chain_id === challenge.chain_id)) {
+      retime(event, Number(event.match_second) + delay);
     }
-    if (Math.abs(totalDistance / 1000 - profile.targetDistanceKm) > 0.015) {
-      throw new Error(`${id} generated ${(totalDistance / 1000).toFixed(3)}km; expected ${profile.targetDistanceKm.toFixed(3)}km`);
+    shiftedChains.add(challenge.chain_id);
+  }
+}
+
+function reconcileCriticalFrames(events, frames, { home, away, half1Seconds }) {
+  const incidentSimulations = {
+    offside: buildOffsideSimulation(),
+    tackle: buildSimulation(),
+  };
+  const incidentSamplers = {
+    offside: sampleOffsideFrame,
+    tackle: sampleFrame,
+  };
+  const tackleContactPoint = incidentActorMatchPoint("tackle", incidentSimulations.tackle.impact.point);
+  const bySecond = new Map(frames.map((frame) => [Number(frame.match_second), frame]));
+  const parsedActors = new Map();
+  for (const frame of frames) parsedActors.set(Number(frame.match_second), JSON.parse(frame.actors));
+  const basePositions = new Map();
+  for (const [second, actors] of parsedActors) {
+    basePositions.set(second, new Map(actors.map((actor) => [actor.person_id, { x: Number(actor.x), y: Number(actor.y) }])));
+  }
+  const getPos = (id, second) => basePositions.get(second)?.get(id) || null;
+  const overrides = new Map();
+  const addPath = (id, keys) => {
+    const sorted = [...keys].sort((a, b) => a.second - b.second);
+    const byPlayer = overrides.get(id) || new Map();
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const from = sorted[i];
+      const to = sorted[i + 1];
+      for (let second = from.second; second <= to.second; second += 1) {
+        const t = (second - from.second) / Math.max(1, to.second - from.second);
+        byPlayer.set(second, {
+          x: from.x + (to.x - from.x) * t,
+          y: from.y + (to.y - from.y) * t,
+        });
+      }
+    }
+    overrides.set(id, byPlayer);
+  };
+  const baseKey = (id, second) => {
+    const p = getPos(id, second);
+    if (!p) throw new Error(`Missing ${id} at ${second} while reconciling incidents`);
+    return { second, x: p.x, y: p.y };
+  };
+
+  // These broader paths lead into and out of the offside sequence; the 27:06 and
+  // 27:07 frames are replaced with the same 120 Hz coordinates shown in Tactical Eye.
+  const offsideRelease = 27 * 60 + 7;
+  addPath("ARS-8", [baseKey("ARS-8", 1619), { second: 1626, x: -16, y: -3.3 },
+    { second: offsideRelease, x: -23.19, y: -3.21 }, { second: 1630, x: -24.5, y: -3.1 }, baseKey("ARS-8", 1637)]);
+  addPath("ARS-9", [baseKey("ARS-9", 1619), { second: 1626, x: -29, y: 0.2 },
+    { second: offsideRelease, x: -32.14, y: 0.18 }, { second: 1628, x: -33.3, y: 0.14 },
+    { second: 1629, x: -34.5, y: 0.1 }, { second: 1630, x: -34.5, y: 0.1 }, baseKey("ARS-9", 1637)]);
+  addPath("MCI-16", [baseKey("MCI-16", 1619), { second: offsideRelease, x: -32, y: -1.55 },
+    { second: 1630, x: -32.2, y: -1.55 }, baseKey("MCI-16", 1637)]);
+  addPath("MCI-31", [baseKey("MCI-31", 1619), { second: offsideRelease, x: -48.7, y: 0 },
+    { second: 1630, x: -48.5, y: 0 }, baseKey("MCI-31", 1637)]);
+  addPath("MCI-9", [baseKey("MCI-9", 1619), { second: 1626, x: -15.2, y: -2.7 }, baseKey("MCI-9", 1637)]);
+  addPath("MCI-17", [baseKey("MCI-17", 1630), { second: 1637, x: -34.5, y: 0.1 },
+    { second: 1639, x: -30.5, y: 2 }, baseKey("MCI-17", 1645)]);
+  addPath("MCI-3", [baseKey("MCI-3", 1630), { second: 1637, x: -30.5, y: 2 },
+    baseKey("MCI-3", 1639), baseKey("MCI-3", 1645)]);
+  addPath("ARS-6", [baseKey("ARS-6", 1630), { second: 1639, x: -26, y: 5 }, baseKey("ARS-6", 1645)]);
+
+  // The recovery occurs with Saka and the previous carrier at the same point.
+  // Gvardiol then closes from the simulation's start position; these three paths
+  // are replaced by the exact 120 Hz incident samples below.
+  addPath("MCI-24", [baseKey("MCI-24", 4640), { second: 4654, x: -5.5, y: -25.5 },
+    { second: 4663, x: 11.55, y: -28.74 }, baseKey("MCI-24", 4672)]);
+  addPath("ARS-7", [baseKey("ARS-7", 4640), { second: 4654, x: 2.35, y: -28.48 },
+    { second: 4663, x: 14.1, y: -27.73 },
+    { second: 4672, x: 14, y: -25 }, { second: 4674, x: 16, y: -23 }, baseKey("ARS-7", 4680)]);
+  addPath("MCI-8", [baseKey("MCI-8", 4640), { second: 4645, x: 20.37, y: -15.82 },
+    { second: 4650, x: 9, y: -20 }, { second: 4651, x: 8, y: -21 },
+    { second: 4654, x: 2.35, y: -28.48 }, { second: 4657, x: 0, y: -25 }, baseKey("MCI-8", 4672)]);
+  addPath("ARS-8", [baseKey("ARS-8", 4663), { second: 4672, x: 10.14, y: -28.06 },
+    { second: 4674, x: 12, y: -26 }, baseKey("ARS-8", 4680)]);
+  addPath("ARS-9", [baseKey("ARS-9", 4663), { second: 4674, x: 16, y: -23 }, baseKey("ARS-9", 4680)]);
+
+  // The late City shot is rebuilt as a genuine edge-of-box chance with Raya in range.
+  addPath("MCI-20", [baseKey("MCI-20", 5468), { second: 5476, x: -42, y: 5 },
+    { second: 5480, x: -42, y: 5 }, baseKey("MCI-20", 5488)]);
+  addPath("MCI-8", [baseKey("MCI-8", 5470), { second: 5480, x: -34.5, y: 3 }, baseKey("MCI-8", 5486)]);
+
+  // Bring defenders into recovery distance before a late-match turnover. This keeps
+  // tackles at the ball instead of teleporting a winner across the pitch.
+  const initialEvents = [...events].sort((a, b) => a.match_second - b.match_second || a.sequence - b.sequence);
+  for (const event of initialEvents.filter((item) => item.match_second >= LIVE_CUTOFF_SECONDS && item.event_type === "ball_recovery")) {
+    const winner = event.player_id;
+    const loser = event.related_player_id;
+    const second = Number(event.match_second);
+    const start = Math.max(LIVE_CUTOFF_SECONDS, second - 6);
+    const winnerStart = overrides.get(winner)?.get(start) || getPos(winner, start);
+    const loserEnd = overrides.get(loser)?.get(second) || getPos(loser, second);
+    if (!winnerStart || !loserEnd) continue;
+    const contact = { x: (winnerStart.x + loserEnd.x) / 2, y: (winnerStart.y + loserEnd.y) / 2 };
+    addPath(winner, [baseKey(winner, start), { second, ...contact }, baseKey(winner, Math.min(5640, second + 5))]);
+    addPath(loser, [baseKey(loser, start), { second, ...contact }, baseKey(loser, Math.min(5640, second + 5))]);
+  }
+  for (const challenge of initialEvents.filter((item) => item.match_second >= LIVE_CUTOFF_SECONDS
+    && item.event_type === "challenge" && item.outcome === "foul")) {
+    const decision = initialEvents.find((item) => item.chain_id === challenge.chain_id && item.event_type === "foul_decision");
+    const restart = initialEvents.find((item) => item.chain_id === challenge.chain_id && item.event_type === "restart_delivery");
+    if (!decision || !restart) continue;
+    const second = Number(challenge.match_second);
+    const start = Math.max(LIVE_CUTOFF_SECONDS, second - 7);
+    const offender = challenge.player_id;
+    const victim = challenge.related_player_id;
+    const a = overrides.get(offender)?.get(second) || getPos(offender, second);
+    if (challenge.chain_id === "foul-22" && victim === "ARS-11" && !overrides.get(victim)?.has(second)) {
+      const latePoint = { x: -17.02, y: 31 };
+      addPath(victim, [baseKey(victim, start), { second, ...latePoint }, baseKey(victim, Math.min(5640, Number(restart.match_second) + 5))]);
+    }
+    const b = overrides.get(victim)?.get(second) || getPos(victim, second);
+    if (!a || !b) continue;
+    // The fouled player is the current carrier; bring the challenger to the ball carrier.
+    const contact = { x: b.x, y: b.y };
+    const settleSecond = Math.min(Number(restart.match_second), second + 3);
+    addPath(offender, [baseKey(offender, start), { second, ...contact }, { second: settleSecond, ...contact },
+      baseKey(offender, Math.min(5640, Number(restart.match_second) + 5))]);
+    addPath(victim, [baseKey(victim, start), { second, ...contact }, { second: settleSecond, ...contact },
+      baseKey(victim, Math.min(5640, Number(restart.match_second) + 5))]);
+  }
+  for (const delivery of initialEvents.filter((item) => item.match_second >= LIVE_CUTOFF_SECONDS && item.event_type === "restart_delivery")) {
+    const second = Number(delivery.match_second);
+    const period = Number(delivery.period);
+    let restartPoint = null;
+    if (delivery.restart_type === "goal_kick") {
+      const chainOut = initialEvents.find((item) => item.chain_id === delivery.chain_id && item.event_type === "ball_out");
+      const shot = chainOut ? initialEvents.find((item) => item.event_id === chainOut.parent_event_id) : null;
+      if (shot) {
+        const direction = shot.team_code === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+        restartPoint = { x: direction * 52.5 - direction * 5, y: 0 };
+      }
+    } else if (delivery.restart_type === "corner") {
+      const awarded = initialEvents.find((item) => item.chain_id === delivery.chain_id && item.event_type === "corner_awarded");
+      const team = awarded?.awarded_team_code || delivery.team_code;
+      const direction = team === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+      restartPoint = { x: direction * 52.5, y: (stableHash(delivery.chain_id) % 2 ? 1 : -1) * 33 };
+    } else {
+      const decision = initialEvents.find((item) => item.chain_id === delivery.chain_id
+        && ["foul_decision", "offside_decision", "penalty_awarded"].includes(item.event_type));
+      const challenge = initialEvents.find((item) => item.chain_id === delivery.chain_id && item.event_type === "challenge");
+      const first = challenge || decision;
+      if (first?.player_id && first?.related_player_id) {
+        const firstSecond = Number(first.match_second);
+        const a = overrides.get(first.player_id)?.get(firstSecond) || getPos(first.player_id, firstSecond);
+        const b = overrides.get(first.related_player_id)?.get(firstSecond) || getPos(first.related_player_id, firstSecond);
+        if (a && b) restartPoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      }
+    }
+    if (!restartPoint) continue;
+    const taker = delivery.player_id;
+    const receiver = delivery.related_player_id;
+    const start = Math.max(LIVE_CUTOFF_SECONDS, second - 7);
+    const direction = delivery.team_code === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+    const target = { x: clamp(restartPoint.x + direction * 5, -48, 48), y: clamp(restartPoint.y + (restartPoint.y >= 0 ? -3 : 3), -30, 30) };
+    addPath(taker, [baseKey(taker, start), { second, ...restartPoint },
+      baseKey(taker, Math.min(5640, second + 5))]);
+    addPath(receiver, [baseKey(receiver, start), { second, ...target },
+      baseKey(receiver, Math.min(5640, second + 5))]);
+  }
+  for (const resolution of initialEvents.filter((item) => item.match_second >= LIVE_CUTOFF_SECONDS
+    && ["restart_resolution", "aerial_duel"].includes(item.event_type) && item.possession_after_player_id)) {
+    const winner = resolution.possession_after_player_id;
+    const challenger = resolution.player_id;
+    if (!winner || !challenger || winner === challenger) continue;
+    const second = Number(resolution.match_second);
+    const start = Math.max(LIVE_CUTOFF_SECONDS, second - 5);
+    const a = overrides.get(winner)?.get(second) || getPos(winner, second);
+    const b = overrides.get(challenger)?.get(second) || getPos(challenger, second);
+    if (!a || !b) continue;
+    const contact = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    addPath(winner, [baseKey(winner, start), { second, ...contact }, baseKey(winner, Math.min(5640, second + 5))]);
+    addPath(challenger, [baseKey(challenger, start), { second, ...contact }, baseKey(challenger, Math.min(5640, second + 5))]);
+  }
+
+  // Give the closing counterattacks real attacking geometry and keep the
+  // recovery, first-time shot, and goal-kick locations within a plausible run.
+  addPath("ARS-11", [baseKey("ARS-11", 4927), { second: 4932, x: 29, y: -4 }, baseKey("ARS-11", 4943)]);
+  addPath("MCI-25", [baseKey("MCI-25", 4927), { second: 4932, x: 29, y: -4 }, baseKey("MCI-25", 4943)]);
+  addPath("MCI-8", [baseKey("MCI-8", 4987), { second: 4992, x: -5, y: -15 }, baseKey("MCI-8", 5004)]);
+  addPath("MCI-47", [baseKey("MCI-47", 4987), { second: 4992, x: -15, y: 17 },
+    { second: 4995, x: -28, y: 15 }, baseKey("MCI-47", 5004)]);
+  addPath("ARS-7", [baseKey("ARS-7", 5528), { second: 5530, x: -2.08, y: 3.94 },
+    { second: 5531, x: 5, y: 5.8 }, { second: 5533, x: 16.5, y: 10 },
+    { second: 5536, x: 31, y: 14 }, baseKey("ARS-7", 5545)]);
+
+  for (const [id, points] of overrides) {
+    for (const [second, pos] of points) {
+      const actors = parsedActors.get(second);
+      const actor = actors?.find((item) => item.person_id === id);
+      if (actor) {
+        actor.x = round2(clamp(pos.x, -52.5, 52.5));
+        actor.y = round2(clamp(pos.y, -34, 34));
+      }
     }
   }
-  return frames;
+  const movementSpans = [[1599, 1645], [4634, 4680], [LIVE_CUTOFF_SECONDS - 1, 5640]];
+  for (const [start, end] of movementSpans) {
+    for (let second = start + 1; second <= end; second += 1) {
+      if (!parsedActors.has(second) || !parsedActors.has(second - 1)) continue;
+      const current = parsedActors.get(second);
+      const prior = new Map(parsedActors.get(second - 1).map((actor) => [actor.person_id, actor]));
+      for (const actor of current) {
+        const previous = prior.get(actor.person_id);
+        if (!previous || actor.status !== "active" || previous.status !== "active") continue;
+        const dx = Number(actor.x) - Number(previous.x);
+        const dy = Number(actor.y) - Number(previous.y);
+        const distance = Math.hypot(dx, dy);
+        if (distance > 8.9) {
+          actor.x = round2(Number(previous.x) + dx / distance * 8.9);
+          actor.y = round2(Number(previous.y) + dy / distance * 8.9);
+        }
+      }
+    }
+  }
+  for (const kind of ["offside", "tackle"]) {
+    const simulation = incidentSimulations[kind];
+    const track = INCIDENT_TRACKING[kind];
+    const firstSecond = Math.floor(matchSecondAtSimulationTime(kind, simulation, 0));
+    const lastSecond = kind === "tackle"
+      ? 4663
+      : Math.ceil(matchSecondAtSimulationTime(kind, simulation, simulation.duration));
+    for (let second = firstSecond; second <= lastSecond; second += 1) {
+      const actors = parsedActors.get(second);
+      if (!actors) continue;
+      const time = simulationTimeAtMatchSecond(kind, simulation, second);
+      const state = incidentSamplers[kind](simulation, time);
+      for (const [role, id] of Object.entries(track.actors)) {
+        const actor = actors.find((item) => item.person_id === id);
+        const sceneActor = state[role];
+        if (!actor || !sceneActor) throw new Error(`${kind} simulation is missing ${role} (${id}) at ${second}`);
+        const point = incidentActorMatchPoint(kind, sceneActor);
+        actor.x = roundPitchCoordinate(clamp(point.x, -52.5, 52.5));
+        actor.y = roundPitchCoordinate(clamp(point.y, -34, 34));
+      }
+    }
+  }
+  for (const [second, actors] of parsedActors) {
+    basePositions.set(second, new Map(actors.map((actor) => [actor.person_id, { x: Number(actor.x), y: Number(actor.y) }])));
+  }
+  for (const frame of frames) frame.actors = JSON.stringify(parsedActors.get(Number(frame.match_second)));
+
+  const eventById = new Map(events.map((event) => [event.event_id, event]));
+  const eventsAt = new Map();
+  for (const event of events) {
+    const rows = eventsAt.get(Number(event.match_second)) || [];
+    rows.push(event);
+    eventsAt.set(Number(event.match_second), rows);
+  }
+  const actorPos = (id, second) => {
+    const frame = bySecond.get(Number(second));
+    const actor = frame ? JSON.parse(frame.actors).find((item) => item.person_id === id) : null;
+    return actor ? { x: Number(actor.x), y: Number(actor.y) } : { x: 0, y: 0 };
+  };
+  const directionFor = (team, period) => team === home ? (period === 1 ? 1 : -1) : (period === 1 ? -1 : 1);
+  const goalFor = (team, period) => directionFor(team, period) * 52.5;
+
+  for (const event of events) {
+    const p = actorPos(event.player_id, Number(event.match_second));
+    const related = actorPos(event.related_player_id, Number(event.match_second));
+    if (["pass", "restart_delivery"].includes(event.event_type)) {
+      event.location_x = round2(p.x);
+      event.location_y = round2(p.y);
+      if (event.related_player_id) {
+        event.target_x = round2(related.x);
+        event.target_y = round2(related.y);
+      }
+      if (event.event_type === "restart_delivery" && event.related_player_id) {
+        event.possession_after_player_id = event.related_player_id;
+        event.possession_after_team_code = teamForPlayerId(event.related_player_id) || event.team_code;
+      }
+    } else if (["shot", "penalty_attempt"].includes(event.event_type)) {
+      event.location_x = round2(p.x);
+      event.location_y = round2(p.y);
+      if (event.team_code) {
+        event.target_x = goalFor(event.team_code, Number(event.period));
+        event.target_y = 0;
+      }
+    } else if (event.event_type === "ball_recovery") {
+      event.location_x = round2(p.x);
+      event.location_y = round2(p.y);
+      event.target_x = round2(p.x);
+      event.target_y = round2(p.y);
+    } else if (event.event_type === "carry") {
+      event.location_x = round2(p.x);
+      event.location_y = round2(p.y);
+    } else if (["restart_resolution", "aerial_duel", "save"].includes(event.event_type)) {
+      const controller = actorPos(event.possession_after_player_id || event.player_id, Number(event.match_second));
+      event.location_x = round2(controller.x);
+      event.location_y = round2(controller.y);
+    } else if (["foul_decision", "offside_decision", "penalty_awarded"].includes(event.event_type)) {
+      const challenge = events.find((candidate) => candidate.chain_id === event.chain_id && candidate.event_type === "challenge");
+      if (challenge) {
+        event.location_x = challenge.location_x;
+        event.location_y = challenge.location_y;
+      } else if (event.chain_id === "incident-offside" && event.event_type === "offside_decision") {
+        const whistlePoint = actorPos("ARS-9", 1630);
+        event.location_x = round2(whistlePoint.x);
+        event.location_y = round2(whistlePoint.y);
+      }
+    } else if (event.chain_id === "incident-offside" && event.event_type === "goal" && event.outcome === "disallowed") {
+      event.location_x = goalFor(event.team_code, Number(event.period));
+      event.location_y = 0;
+    } else if (event.chain_id === "incident-offside" && ["offside_decision", "var_review"].includes(event.event_type)) {
+      const whistlePoint = actorPos("ARS-9", 1630);
+      event.location_x = round2(whistlePoint.x);
+      event.location_y = round2(whistlePoint.y);
+    } else if (event.chain_id === "incident-tackle-77" && ["challenge", "foul_decision", "card_shown", "var_review"].includes(event.event_type)) {
+      event.location_x = roundPitchCoordinate(tackleContactPoint.x);
+      event.location_y = roundPitchCoordinate(tackleContactPoint.y);
+    } else if (event.event_type === "challenge" && event.player_id && event.related_player_id) {
+      event.location_x = round2((p.x + related.x) / 2);
+      event.location_y = round2((p.y + related.y) / 2);
+    } else if (event.event_type === "ball_out") {
+      const shot = eventById.get(event.parent_event_id);
+      if (event.outcome === "goal_kick" && shot) {
+        event.location_x = goalFor(shot.team_code, Number(event.period));
+        event.location_y = (stableHash(shot.event_id) % 2 ? 1 : -1) * 4.2;
+      } else if (event.outcome === "corner") {
+        event.location_x = goalFor(event.awarded_team_code, Number(event.period));
+        event.location_y = (stableHash(event.chain_id) % 2 ? 1 : -1) * 34;
+      }
+    }
+  }
+
+  const controlledTypes = new Set(["carry", "ball_recovery", "save", "restart_resolution", "aerial_duel"]);
+  const stoppageTypes = new Set(["foul_decision", "corner_awarded", "penalty_awarded", "offside_decision", "ball_out"]);
+  let possession = { id: "", team: "" };
+  let lastTouch = "";
+  let ball = { x: Number(bySecond.get(LIVE_CUTOFF_SECONDS - 1).ball_x), y: Number(bySecond.get(LIVE_CUTOFF_SECONDS - 1).ball_y) };
+  let flight = null;
+  const priorEvent = [...events].filter((event) => event.match_second < LIVE_CUTOFF_SECONDS
+    && ["pass", "restart_delivery", "restart_resolution", "carry", "ball_recovery"].includes(event.event_type))
+    .sort((a, b) => b.match_second - a.match_second || b.sequence - a.sequence)[0];
+  if (priorEvent?.event_type === "pass" || priorEvent?.event_type === "restart_delivery") {
+    possession = { id: priorEvent.possession_after_player_id || priorEvent.related_player_id, team: priorEvent.possession_after_team_code || teamForPlayerId(priorEvent.related_player_id) || "" };
+    lastTouch = priorEvent.event_id;
+  } else if (priorEvent) {
+    possession = { id: priorEvent.possession_after_player_id || priorEvent.player_id, team: priorEvent.possession_after_team_code || teamForPlayerId(priorEvent.player_id) || "" };
+    lastTouch = priorEvent.event_id;
+  }
+
+  const writeBall = (frame, motion, fromId = "", toId = "") => {
+    frame.ball_x = round2(clamp(ball.x, -52.5, 52.5));
+    frame.ball_y = round2(clamp(ball.y, -34, 34));
+    frame.ball_z = 0;
+    frame.ball_motion = motion;
+    frame.ball_interaction_event_id = lastTouch;
+    frame.ball_from_player_id = fromId;
+    frame.ball_to_player_id = toId;
+    frame.possession_player_id = possession.id;
+    frame.possession_team = possession.team;
+    frame.possession_no = possession.id ? Number(possession.id.split("-")[1]) : "";
+  };
+  const holderAt = (id, second) => actorPos(id, second);
+  const startFlight = (event, second, targetId, targetPoint, motion = "transfer", resolvesToId = "", resolvesToTeam = "") => {
+    const source = actorPos(event.player_id, second);
+    const length = Math.hypot(targetPoint.x - source.x, targetPoint.y - source.y);
+    ball = { x: source.x, y: source.y };
+    possession = { id: "", team: "" };
+    lastTouch = event.event_id;
+    flight = {
+      from: source, to: targetPoint, startSecond: second,
+      duration: Math.max(1, Math.ceil(length / 17.5)), targetId,
+      sourceId: event.player_id, eventId: event.event_id, motion,
+      resolvesToId, resolvesToTeam,
+    };
+  };
+  const advanceFlight = (second) => {
+    const target = flight.targetId && !flight.targetId.startsWith("GOAL-") && flight.targetId !== "OUT"
+      ? holderAt(flight.targetId, second) : flight.to;
+    const dx = target.x - ball.x;
+    const dy = target.y - ball.y;
+    const remaining = Math.hypot(dx, dy);
+    const step = Math.min(17.5, remaining);
+    ball = remaining > 0
+      ? { x: ball.x + dx / remaining * step, y: ball.y + dy / remaining * step }
+      : { ...target };
+    lastTouch = flight.eventId;
+    if (remaining <= 17.5) {
+      if (flight.targetId?.startsWith("GOAL-")) {
+        possession = { id: "", team: "" };
+        flight = null;
+        return { motion: "goal" };
+      }
+      if (flight.targetId === "OUT") {
+        possession = { id: "", team: "" };
+        flight = null;
+        return { motion: "out" };
+      }
+      possession = { id: flight.resolvesToId || flight.targetId, team: flight.resolvesToTeam || teamForPlayerId(flight.resolvesToId || flight.targetId) || "" };
+      flight = null;
+      return { motion: "controlled" };
+    }
+    return { motion: flight.motion };
+  };
+
+  for (let second = LIVE_CUTOFF_SECONDS; second <= Number(frames[frames.length - 1].match_second); second += 1) {
+    const frame = bySecond.get(second);
+    const frameEvents = (eventsAt.get(second) || []).sort((a, b) => a.sequence - b.sequence);
+    let motion = "stopped";
+    let fromId = "";
+    let toId = "";
+    if (second === LIVE_CUTOFF_SECONDS && possession.id) {
+      ball = holderAt(possession.id, second);
+      motion = "controlled";
+      fromId = possession.id;
+      toId = possession.id;
+    } else if (!frameEvents.length && flight) {
+      const result = advanceFlight(second);
+      motion = result.motion;
+      fromId = flight?.sourceId || "";
+      toId = flight?.targetId || "";
+      if (!flight) fromId = toId || fromId;
+    } else if (!frameEvents.length && possession.id) {
+      ball = holderAt(possession.id, second);
+      motion = "controlled";
+      fromId = possession.id;
+      toId = possession.id;
+    } else if (!frameEvents.length) {
+      motion = "stopped";
+    }
+
+    for (const event of frameEvents) {
+      if (event.event_type === "phase" && ["full_time", "half_time"].includes(event.phase)) {
+        possession = { id: "", team: "" };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "stopped";
+        fromId = toId = "";
+        continue;
+      }
+      if (event.event_type === "goal" && event.outcome === "scored") {
+        ball = { x: goalFor(event.team_code, Number(event.period)) * 0.995, y: 0 };
+        possession = { id: "", team: "" };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "goal";
+        fromId = event.player_id;
+        toId = `GOAL-${event.team_code}`;
+        continue;
+      }
+      if (event.event_type === "shot" || event.event_type === "penalty_attempt") {
+        const period = Number(event.period);
+        const shooter = actorPos(event.player_id, second);
+        if (event.outcome === "wide") {
+          const side = stableHash(event.event_id) % 2 ? 1 : -1;
+          ball = { x: goalFor(event.team_code, period), y: side * 4.2 };
+          possession = { id: "", team: "" };
+          flight = null;
+          lastTouch = event.event_id;
+          motion = "out";
+          fromId = event.player_id;
+          toId = "OUT";
+        } else if (event.outcome === "blocked_out_for_corner") {
+          const defender = event.related_player_id || "";
+          startFlight(event, second, defender, actorPos(defender, second), "shot", "", "");
+          motion = "shot";
+          fromId = event.player_id;
+          toId = defender;
+        } else if (event.outcome === "saved") {
+          const keeper = event.goalkeeper_id || "";
+          startFlight(event, second, keeper, actorPos(keeper, second), "shot", keeper, teamForPlayerId(keeper) || "");
+          motion = "shot";
+          fromId = event.player_id;
+          toId = keeper;
+        } else {
+          const goalId = `GOAL-${event.team_code}`;
+          const goalPoint = { x: goalFor(event.team_code, period), y: 0 };
+          startFlight(event, second, goalId, goalPoint, "shot", "", "");
+          motion = "shot";
+          fromId = event.player_id;
+          toId = goalId;
+        }
+        void shooter;
+        continue;
+      }
+      if (["pass", "restart_delivery"].includes(event.event_type)) {
+        const targetId = event.related_player_id || event.possession_after_player_id;
+        if (targetId) {
+          const receiver = actorPos(targetId, second);
+          startFlight(event, second, targetId, receiver, "transfer",
+            targetId,
+            teamForPlayerId(targetId) || event.possession_after_team_code || event.team_code || "");
+          motion = "transfer";
+          fromId = event.player_id;
+          toId = targetId;
+        }
+        continue;
+      }
+      if (event.event_type === "ball_out") {
+        ball = { x: Number(event.location_x), y: Number(event.location_y) };
+        possession = { id: "", team: "" };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "out";
+        fromId = event.player_id;
+        toId = "OUT";
+        continue;
+      }
+      if (event.event_type === "challenge" && event.outcome === "foul") {
+        ball = { x: Number(event.location_x), y: Number(event.location_y) };
+        possession = { id: "", team: "" };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "stopped";
+        fromId = toId = "";
+        continue;
+      }
+      if (stoppageTypes.has(event.event_type)) {
+        if (event.event_type !== "corner_awarded" && event.location_x !== "" && event.location_y !== "") {
+          const stoppagePoint = { x: Number(event.location_x), y: Number(event.location_y) };
+          if (Math.hypot(stoppagePoint.x - ball.x, stoppagePoint.y - ball.y) <= 18) ball = stoppagePoint;
+        }
+        possession = { id: "", team: "" };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "stopped";
+        fromId = toId = "";
+        continue;
+      }
+      if (controlledTypes.has(event.event_type)) {
+        const id = event.possession_after_player_id || event.player_id || event.related_player_id;
+        if (id) {
+          ball = holderAt(id, second);
+          possession = { id, team: event.possession_after_team_code || teamForPlayerId(id) || "" };
+          flight = null;
+          lastTouch = event.event_id;
+          motion = "controlled";
+          fromId = toId = id;
+        }
+        continue;
+      }
+      if (event.event_type === "carry") {
+        ball = holderAt(event.player_id, second);
+        possession = { id: event.player_id, team: event.team_code };
+        flight = null;
+        lastTouch = event.event_id;
+        motion = "controlled";
+        fromId = toId = event.player_id;
+      }
+      if (event.event_type === "goal" && event.outcome === "disallowed") {
+        flight = null;
+        possession = { id: "", team: "" };
+        lastTouch = event.event_id;
+        motion = "stopped";
+      }
+    }
+    writeBall(frame, motion, fromId, toId);
+  }
+
+  // Rebuild the two explicitly designed incident sequences before the strict checks.
+  const eventFor = (chainId, type, second) => events.find((event) => event.chain_id === chainId
+    && event.event_type === type && event.match_second === second);
+  const setFrameBall = (second, point, motion, interaction, fromId = "", toId = "", possId = "", height = 0) => {
+    const frame = bySecond.get(second);
+    frame.ball_x = roundPitchCoordinate(point.x);
+    frame.ball_y = roundPitchCoordinate(point.y);
+    frame.ball_z = roundPitchCoordinate(height);
+    frame.ball_motion = motion;
+    frame.ball_interaction_event_id = typeof interaction === "string" ? interaction : interaction?.event_id || "";
+    frame.ball_from_player_id = fromId;
+    frame.ball_to_player_id = toId;
+    frame.possession_player_id = possId;
+    frame.possession_team = teamForPlayerId(possId) || "";
+    frame.possession_no = possId ? Number(possId.split("-")[1]) : "";
+  };
+  const offsideRecovery = eventFor("incident-offside", "ball_recovery", 1626);
+  const offsidePass = eventFor("incident-offside", "pass", 1627);
+  const offsideTouch = eventFor("incident-offside", "carry", 1628);
+  const offsideShot = eventFor("incident-offside", "shot", 1629);
+  const offsideCall = eventFor("incident-offside", "offside_decision", 1630);
+  const offsideDelivery = eventFor("incident-offside", "restart_delivery", 1637);
+  const offsideResolution = eventFor("incident-offside", "restart_resolution", 1639);
+  if ([offsideRecovery, offsidePass, offsideTouch, offsideShot, offsideCall, offsideDelivery, offsideResolution].every(Boolean)) {
+    const precedingCarry = events.find((event) => event.match_second === 1625 && event.event_type === "carry" && event.player_id === "MCI-9");
+    const precedingTouch = events.filter((event) => event.match_second < 1625 && event.event_type === "pass"
+      && event.related_player_id === "MCI-9").sort((a, b) => b.match_second - a.match_second)[0];
+    setFrameBall(1624, actorPos("MCI-9", 1624), "controlled", precedingTouch?.event_id || "", "MCI-9", "MCI-9", "MCI-9");
+    if (precedingCarry) setFrameBall(1625, actorPos("MCI-9", 1625), "controlled", precedingCarry.event_id, "MCI-9", "MCI-9", "MCI-9");
+    const offsideSimulation = incidentSimulations.offside;
+    const recoveryTime = simulationTimeAtMatchSecond("offside", offsideSimulation, 1626);
+    const recoveryState = sampleOffsideFrame(offsideSimulation, recoveryTime);
+    const recoveryBall = incidentBallMatchPoint("offside", recoveryState.ball);
+    setFrameBall(1626, recoveryBall, "controlled", offsideRecovery.event_id,
+      "ARS-8", "ARS-8", "ARS-8", recoveryBall.z);
+    const releaseTime = simulationTimeAtMatchSecond("offside", offsideSimulation, 1627);
+    const releaseState = sampleOffsideFrame(offsideSimulation, releaseTime);
+    const releaseBall = incidentBallMatchPoint("offside", releaseState.ball);
+    setFrameBall(1627, releaseBall, "transfer", offsidePass.event_id,
+      "ARS-8", "ARS-9", "", releaseBall.z);
+    setFrameBall(1628, actorPos("ARS-9", 1628), "controlled", offsideTouch.event_id, "ARS-9", "ARS-9", "ARS-9");
+    const disallowedGoalPoint = { x: goalFor(offsideShot.team_code, Number(offsideShot.period)), y: 0 };
+    setFrameBall(1629, disallowedGoalPoint, "goal", offsideShot.event_id, "ARS-9", "GOAL-ARS", "");
+    const whistlePoint = actorPos("ARS-9", 1630);
+    const stoppagePoint = disallowedGoalPoint;
+    for (const second of [1630, 1631, 1632, 1633, 1634, 1635, 1636]) {
+      const stoppageEvent = second <= 1632 ? offsideCall : eventFor("incident-offside", "var_review", 1633);
+      setFrameBall(second, stoppagePoint, "stopped", stoppageEvent, "", "", "");
+    }
+    const restartPoint = actorPos("MCI-17", 1637);
+    const resolutionPoint = actorPos("MCI-3", 1639);
+    setFrameBall(1637, restartPoint, "transfer", offsideDelivery.event_id, "MCI-17", "MCI-3", "");
+    setFrameBall(1638, { x: (restartPoint.x + resolutionPoint.x) / 2, y: (restartPoint.y + resolutionPoint.y) / 2 },
+      "transfer", offsideDelivery.event_id, "MCI-17", "MCI-3", "");
+    setFrameBall(1639, resolutionPoint, "controlled", offsideResolution.event_id, "MCI-3", "MCI-3", "MCI-3");
+    setFrameBall(1640, actorPos("MCI-3", 1640), "controlled", offsideResolution.event_id, "MCI-3", "MCI-3", "MCI-3");
+  }
+
+  // Reconstruct the lead-in pass to the tackle so the receiver cannot be
+  // treated as having possession before the ball has physically arrived.
+  const tackleLeadPass = events.find((event) => event.event_id === "event-00953");
+  const tackleLeadCarry = events.find((event) => event.event_id === "event-00954");
+  if (tackleLeadPass && tackleLeadCarry && tackleLeadPass.related_player_id === "MCI-8") {
+    const source = { x: Number(tackleLeadPass.location_x), y: Number(tackleLeadPass.location_y) };
+    setFrameBall(4645, source, "transfer", tackleLeadPass.event_id,
+      tackleLeadPass.player_id, tackleLeadPass.related_player_id, "");
+    let routeBall = source;
+    let arrived = false;
+    for (let second = 4646; second < tackleLeadCarry.match_second; second += 1) {
+      const target = actorPos(tackleLeadPass.related_player_id, second);
+      const dx = target.x - routeBall.x;
+      const dy = target.y - routeBall.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= 17.5) {
+        routeBall = target;
+        arrived = true;
+      } else {
+        routeBall = { x: routeBall.x + dx / distance * 17.5, y: routeBall.y + dy / distance * 17.5 };
+      }
+      setFrameBall(second, routeBall, arrived ? "controlled" : "transfer", tackleLeadPass.event_id,
+        tackleLeadPass.player_id, tackleLeadPass.related_player_id, arrived ? tackleLeadPass.related_player_id : "");
+    }
+    if (!arrived) throw new Error("Tackle lead-in pass does not reach MCI-8 before the next carry");
+    setFrameBall(tackleLeadCarry.match_second, actorPos(tackleLeadCarry.player_id, tackleLeadCarry.match_second),
+      "controlled", tackleLeadCarry.event_id, tackleLeadCarry.player_id, tackleLeadCarry.player_id, tackleLeadCarry.player_id);
+    for (let second = tackleLeadCarry.match_second + 1; second < 4654; second += 1) {
+      setFrameBall(second, actorPos(tackleLeadCarry.player_id, second), "controlled", tackleLeadCarry.event_id,
+        tackleLeadCarry.player_id, tackleLeadCarry.player_id, tackleLeadCarry.player_id);
+    }
+  }
+
+  const tackleRecovery = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "ball_recovery");
+  const tackleCarry1 = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "carry" && event.match_second === 4655);
+  const tackleCarry2 = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "carry" && event.match_second === 4656);
+  const tackle = eventFor("incident-tackle-77", "challenge", 4657);
+  const tackleCall = eventFor("incident-tackle-77", "foul_decision", 4658);
+  const tackleDelivery = eventFor("incident-tackle-77", "restart_delivery", 4672);
+  const tackleResolution = eventFor("incident-tackle-77", "restart_resolution", 4674);
+  if ([tackleRecovery, tackleCarry1, tackleCarry2, tackle, tackleCall, tackleDelivery, tackleResolution].every(Boolean)) {
+    setFrameBall(4654, actorPos("ARS-7", 4654), "controlled", tackleRecovery.event_id, "ARS-7", "ARS-7", "ARS-7");
+    const tackleSimulation = incidentSimulations.tackle;
+    for (const [second, interaction] of [[4655, tackleCarry1], [4656, tackleCarry2]]) {
+      const time = simulationTimeAtMatchSecond("tackle", tackleSimulation, second);
+      const state = sampleFrame(tackleSimulation, time);
+      const point = incidentBallMatchPoint("tackle", state.ball);
+      setFrameBall(second, point, "controlled", interaction.event_id, "ARS-7", "ARS-7", "ARS-7", point.z);
+    }
+    const contactTime = simulationTimeAtMatchSecond("tackle", tackleSimulation, 4657);
+    const contactState = sampleFrame(tackleSimulation, contactTime);
+    const contactBall = incidentBallMatchPoint("tackle", contactState.ball);
+    setFrameBall(4657, contactBall, "controlled", tackle.event_id, "ARS-7", "ARS-7", "ARS-7", contactBall.z);
+    const whistleTime = tackleSimulation.events.find((item) => item.id === "whistle").t;
+    const whistleState = sampleFrame(tackleSimulation, whistleTime);
+    const whistleBall = incidentBallMatchPoint("tackle", whistleState.ball);
+    for (const second of [4658, 4659, 4660, 4661, 4662, 4663, 4664, 4665, 4666, 4667, 4668, 4669, 4670, 4671]) {
+      setFrameBall(second, whistleBall, "stopped", tackleCall.event_id, "", "", "", whistleBall.z);
+    }
+    setFrameBall(4672, actorPos("ARS-8", 4672), "transfer", tackleDelivery.event_id, "ARS-8", "ARS-7", "");
+    setFrameBall(4673, actorPos("ARS-7", 4673), "controlled", tackleDelivery.event_id, "ARS-8", "ARS-7", "ARS-7");
+    setFrameBall(4674, actorPos("ARS-9", 4674), "controlled", tackleResolution.event_id, "ARS-7", "ARS-9", "ARS-9");
+    for (let second = 4675; second <= 4677; second += 1) {
+      setFrameBall(second, actorPos("ARS-9", second), "controlled", tackleResolution.event_id, "ARS-9", "ARS-9", "ARS-9");
+    }
+    const nextPass = events.find((event) => event.event_type === "pass" && event.match_second === 4678);
+    if (nextPass) {
+      const from = actorPos(nextPass.player_id, 4678);
+      const to = actorPos(nextPass.related_player_id, 4678);
+      setFrameBall(4678, from, "transfer", nextPass.event_id, nextPass.player_id, nextPass.related_player_id, "");
+      setFrameBall(4679, { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
+        "transfer", nextPass.event_id, nextPass.player_id, nextPass.related_player_id, "");
+      setFrameBall(4680, actorPos(nextPass.related_player_id, 4680), "controlled", nextPass.event_id,
+        nextPass.player_id, nextPass.related_player_id, nextPass.related_player_id);
+    }
+  }
+
+  // Keep every live controlled-ball sample attached to the current holder after
+  // the incident-specific timeline corrections above.
+  for (const frame of frames) {
+    const second = Number(frame.match_second);
+    const criticalSpan = second >= LIVE_CUTOFF_SECONDS || (second >= 1600 && second <= 1645) || (second >= 4635 && second <= 4680);
+    if (!criticalSpan || frame.ball_motion !== "controlled" || !frame.possession_player_id
+      || [1626, 4655, 4656, 4657].includes(second)) continue;
+    const holder = JSON.parse(frame.actors).find((actor) => actor.person_id === frame.possession_player_id);
+    if (!holder) throw new Error(`${frame.frame_id} possession holder ${frame.possession_player_id} is absent while reconciling controlled ball`);
+    frame.ball_x = round2(Number(holder.x));
+    frame.ball_y = round2(Number(holder.y));
+  }
+
+  const interpolateActors = (matchSecond) => {
+    const lowerSecond = Math.floor(matchSecond);
+    const upperSecond = Math.ceil(matchSecond);
+    const lower = bySecond.get(lowerSecond);
+    const upper = bySecond.get(upperSecond);
+    if (!lower || !upper) throw new Error(`No base frames bracket incident sample at ${matchSecond}`);
+    const leftActors = JSON.parse(lower.actors);
+    if (lowerSecond === upperSecond) return leftActors;
+    const rightById = new Map(JSON.parse(upper.actors).map((actor) => [actor.person_id, actor]));
+    const fraction = matchSecond - lowerSecond;
+    return leftActors.map((actor) => {
+      const next = rightById.get(actor.person_id);
+      if (!next || actor.status !== "active" || next.status !== "active") return { ...actor };
+      return {
+        ...actor,
+        x: roundPitchCoordinate(Number(actor.x) + (Number(next.x) - Number(actor.x)) * fraction),
+        y: roundPitchCoordinate(Number(actor.y) + (Number(next.y) - Number(actor.y)) * fraction),
+      };
+    });
+  };
+  const denseIncidentFrames = [];
+  const addIncidentSamples = (kind) => {
+    const simulation = incidentSimulations[kind];
+    const sampler = incidentSamplers[kind];
+    const stepCount = Math.round(simulation.duration / INCIDENT_TRACKING_SAMPLE_STEP);
+    const track = INCIDENT_TRACKING[kind];
+    for (let index = 0; index <= stepCount; index += 1) {
+      const time = Math.min(simulation.duration, index * INCIDENT_TRACKING_SAMPLE_STEP);
+      const matchSecond = matchSecondAtSimulationTime(kind, simulation, time);
+      const matchMs = simulationMatchMilliseconds(kind, simulation, time);
+      if (matchMs % 1000 === 0) continue;
+      const state = sampler(simulation, time);
+      const actors = interpolateActors(matchMs / 1000);
+      for (const [role, id] of Object.entries(track.actors)) {
+        const actor = actors.find((item) => item.person_id === id);
+        const point = incidentActorMatchPoint(kind, state[role]);
+        actor.x = roundPitchCoordinate(clamp(point.x, -52.5, 52.5));
+        actor.y = roundPitchCoordinate(clamp(point.y, -34, 34));
+      }
+
+      const ball = incidentBallMatchPoint(kind, state.ball);
+      let motion;
+      let interaction;
+      let fromId = "";
+      let toId = "";
+      let possessionId = "";
+      if (kind === "offside") {
+        const recovery = events.find((event) => event.chain_id === "incident-offside" && event.event_type === "ball_recovery");
+        const pass = events.find((event) => event.chain_id === "incident-offside" && event.event_type === "pass");
+        const beforeRelease = time < simulation.contactT;
+        motion = beforeRelease ? "controlled" : "transfer";
+        interaction = beforeRelease ? recovery : pass;
+        fromId = "ARS-8";
+        toId = beforeRelease ? "ARS-8" : "ARS-9";
+        possessionId = beforeRelease ? "ARS-8" : "";
+      } else {
+        const recovery = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "ball_recovery");
+        const carries = events.filter((event) => event.chain_id === "incident-tackle-77" && event.event_type === "carry")
+          .sort((a, b) => a.match_second - b.match_second);
+        const challenge = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "challenge");
+        const whistle = simulation.events.find((event) => event.id === "whistle");
+        const decision = events.find((event) => event.chain_id === "incident-tackle-77" && event.event_type === "foul_decision");
+        const globalTime = matchSecondAtSimulationTime(kind, simulation, time);
+        if (time >= whistle.t) {
+          motion = "stopped";
+          interaction = decision;
+        } else if (time >= simulation.contactT + 0.04) {
+          motion = "transfer";
+          interaction = challenge;
+          fromId = "ARS-7";
+        } else {
+          motion = "controlled";
+          interaction = globalTime < 4655.5 ? carries.find((event) => event.match_second === 4655) :
+            globalTime < 4656.5 ? carries.find((event) => event.match_second === 4656) : challenge;
+          interaction ||= recovery;
+          fromId = "ARS-7";
+          toId = "ARS-7";
+          possessionId = "ARS-7";
+        }
+      }
+      const period = periodForMatchSecond(matchMs / 1000, half1Seconds);
+      const periodMs = period === 1 ? matchMs : matchMs - half1Seconds * 1000;
+      const wholeClock = formatElapsedClock(matchMs / 1000, half1Seconds, 2880);
+      const fraction = Math.round(matchMs % 1000);
+      denseIncidentFrames.push({
+        frame_id: `frame-incident-${kind}-${String(index).padStart(4, "0")}`,
+        match_ms: matchMs,
+        match_second: matchMs / 1000,
+        period,
+        period_ms: periodMs,
+        clock_label: fraction ? `${wholeClock}.${String(fraction).padStart(3, "0")}` : wholeClock,
+        ball_x: roundPitchCoordinate(ball.x),
+        ball_y: roundPitchCoordinate(ball.y),
+        ball_z: roundPitchCoordinate(ball.z),
+        ball_motion: motion,
+        ball_interaction_event_id: interaction?.event_id || "",
+        ball_from_player_id: fromId,
+        ball_to_player_id: toId,
+        possession_team: teamForPlayerId(possessionId) || "",
+        possession_player_id: possessionId,
+        possession_no: possessionId ? Number(possessionId.split("-")[1]) : "",
+        event_ids: "[]",
+        actors: JSON.stringify(actors),
+      });
+    }
+  };
+  addIncidentSamples("offside");
+  addIncidentSamples("tackle");
+  frames.push(...denseIncidentFrames);
+  frames.sort((left, right) => Number(left.match_ms) - Number(right.match_ms)
+    || String(left.frame_id).localeCompare(String(right.frame_id)));
 }
 
 const EVENT_HEADERS = [
@@ -1846,10 +3069,44 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
   for (const event of events) {
     if (eventIds.has(event.event_id)) throw new Error(`Duplicate event_id ${event.event_id}`);
     eventIds.add(event.event_id);
+    if (event.event_type === "pass") {
+      const completed = event.pass_completed === true;
+      if (completed && teamForPlayerId(event.related_player_id) !== event.team_code) {
+        throw new Error(`${event.event_id} completed pass changes team without a recovery event`);
+      }
+      if (!completed && event.outcome === "intercepted"
+        && (teamForPlayerId(event.related_player_id) === event.team_code
+          || event.possession_after_player_id !== event.related_player_id)) {
+        throw new Error(`${event.event_id} intercepted pass does not assign the ball to its interceptor`);
+      }
+    }
+    if (event.event_type === "carry"
+      && (event.possession_after_player_id !== event.player_id || event.possession_after_team_code !== event.team_code)) {
+      throw new Error(`${event.event_id} carry does not preserve the carrier's possession`);
+    }
+    if (event.event_type === "ball_recovery"
+      && (!event.player_id || !event.related_player_id || teamForPlayerId(event.player_id) === teamForPlayerId(event.related_player_id)
+        || event.possession_after_player_id !== event.player_id || event.possession_after_team_code !== event.team_code)) {
+      throw new Error(`${event.event_id} recovery does not transfer possession from an opponent to the winner`);
+    }
     const frame = frameById.get(event.frame_id);
     if (!frame) throw new Error(`${event.event_id} has no frame ${event.frame_id}`);
     if (frame.match_ms !== event.match_ms) throw new Error(`${event.event_id} and ${frame.frame_id} have different timestamps`);
     if (!JSON.parse(frame.event_ids).includes(event.event_id)) throw new Error(`${event.event_id} is absent from its linked frame`);
+    if (["foul_decision", "corner_awarded", "penalty_awarded", "offside_decision"].includes(event.event_type)
+      && (frame.ball_motion !== "stopped" || frame.possession_player_id)) {
+      throw new Error(`${event.event_id} whistle frame must have a stationary ball and no live possession`);
+    }
+    if (event.event_type === "goal" && event.outcome === "scored"
+      && (frame.ball_motion !== "goal" || frame.possession_player_id)) {
+      throw new Error(`${event.event_id} scored goal is not reflected by a goal frame`);
+    }
+    if (event.event_type === "ball_recovery" && frame.ball_motion !== "stopped" && frame.ball_motion !== "out"
+      && frame.possession_player_id && frame.possession_player_id !== event.possession_after_player_id) {
+      const laterSameSecondAction = JSON.parse(frame.event_ids).map((id) => eventsById.get(id)).filter(Boolean)
+        .some((later) => later.sequence > event.sequence && (later.possession_after_player_id || ["foul_decision", "corner_awarded", "penalty_awarded", "offside_decision"].includes(later.event_type)));
+      if (!laterSameSecondAction) throw new Error(`${event.event_id} recovery does not give possession to its winner in ${frame.frame_id}`);
+    }
     for (const id of JSON.parse(event.participant_ids)) {
       const actor = JSON.parse(frame.actors).find((item) => item.person_id === id);
       if (!actor) throw new Error(`${event.event_id} participant ${id} is absent from frame ${frame.frame_id}`);
@@ -1861,25 +3118,57 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
       }
     }
   }
-  if (frames.length !== half1Seconds + half2Seconds + 1) throw new Error("Frame table does not cover every second through full time");
+  const secondFrames = frames.filter((frame) => Number.isInteger(Number(frame.match_second)));
+  if (secondFrames.length !== half1Seconds + half2Seconds + 1) throw new Error("Frame table does not cover every whole second through full time");
+  for (let index = 1; index < secondFrames.length; index += 1) {
+    if (Number(secondFrames[index].match_second) !== Number(secondFrames[index - 1].match_second) + 1) {
+      throw new Error("Whole-second frame timestamps contain a gap");
+    }
+  }
   for (let index = 1; index < frames.length; index += 1) {
-    if (frames[index].match_second !== frames[index - 1].match_second + 1) throw new Error("Frame timestamps contain a gap");
-    if (frames[index].possession_player_id && frames[index].possession_player_id !== frames[index - 1].possession_player_id) {
-      const nextHolder = frames[index].possession_player_id;
-      const frameEvents = JSON.parse(frames[index].event_ids).map((id) => eventsById.get(id)).filter(Boolean);
+    const previousFrame = frames[index - 1];
+    const currentFrame = frames[index];
+    if (currentFrame.possession_player_id && currentFrame.possession_player_id !== previousFrame.possession_player_id) {
+      const nextHolder = currentFrame.possession_player_id;
+      const frameEvents = JSON.parse(currentFrame.event_ids).map((id) => eventsById.get(id)).filter(Boolean);
       const holderWasInvolved = frameEvents.some((event) => JSON.parse(event.participant_ids).includes(nextHolder));
       const wasKickoff = frameEvents.some((event) => event.event_type === "phase" && ["kick_off", "second_half"].includes(event.phase));
-      if (!holderWasInvolved && !wasKickoff) throw new Error(`${frames[index].frame_id} changes possession to ${nextHolder} without a linked player interaction`);
+      const previousRoute = eventsById.get(previousFrame.ball_interaction_event_id);
+      const arrivedFromLinkedPass = previousFrame.ball_to_player_id === nextHolder
+        && (["pass", "restart_delivery"].includes(previousRoute?.event_type)
+          || previousRoute?.event_type === "shot" && previousRoute.outcome === "saved");
+      const currentInteraction = eventsById.get(currentFrame.ball_interaction_event_id);
+      const linkedRecovery = currentInteraction?.event_type === "ball_recovery"
+        && currentInteraction.possession_after_player_id === nextHolder;
+      const linkedReception = currentInteraction?.event_type === "pass"
+        && currentInteraction.related_player_id === nextHolder;
+      if (!holderWasInvolved && !wasKickoff && !arrivedFromLinkedPass && !linkedRecovery && !linkedReception) {
+        throw new Error(`${currentFrame.frame_id} changes possession to ${nextHolder} without a linked player interaction`);
+      }
     }
-    if (Number(frames[index - 1].period) === Number(frames[index].period)) {
-      const ballSpeed = Math.hypot(Number(frames[index].ball_x) - Number(frames[index - 1].ball_x), Number(frames[index].ball_y) - Number(frames[index - 1].ball_y));
-      const frameEvents = JSON.parse(frames[index].event_ids).map((id) => eventsById.get(id)).filter(Boolean);
+    if (Number(previousFrame.period) === Number(currentFrame.period)) {
+      const ballSpeed = Math.hypot(Number(currentFrame.ball_x) - Number(previousFrame.ball_x), Number(currentFrame.ball_y) - Number(previousFrame.ball_y));
+      const frameEvents = JSON.parse(currentFrame.event_ids).map((id) => eventsById.get(id)).filter(Boolean);
+      if (ballSpeed > 0.05) {
+        const touch = eventsById.get(currentFrame.ball_interaction_event_id);
+        const touchTypes = new Set(["phase", "pass", "carry", "ball_recovery", "challenge", "shot", "penalty_attempt", "save", "block", "aerial_duel", "restart_delivery", "restart_resolution", "handball_contact", "substitution", "goal", "ball_out", "foul_decision", "offside_decision", "corner_awarded", "penalty_awarded"]);
+        if (!touch || !touchTypes.has(touch.event_type)) {
+          throw new Error(`${currentFrame.frame_id} ball moved without a linked touch, restart, goal, or out-of-play event`);
+        }
+      }
+      const shotExit = frameEvents.some((event) => ["shot", "penalty_attempt"].includes(event.event_type)
+        && ["wide", "goal_disallowed"].includes(event.outcome));
       const allowedBallExit = frameEvents.some((event) => event.event_type === "ball_out"
-        || event.event_type === "goal" && event.outcome === "scored"
-        || ["shot", "penalty_attempt"].includes(event.event_type) && event.outcome === "wide");
+        || event.event_type === "goal" && event.outcome === "scored") || shotExit;
       if (ballSpeed > 18.01 && !allowedBallExit) {
         const eventTypes = frameEvents.map((event) => event.event_type).join(",") || "none";
-        throw new Error(`${frames[index].frame_id} ball moves ${ballSpeed.toFixed(1)}m in one second without an exit or goal event (motion=${frames[index - 1].ball_motion}->${frames[index].ball_motion}, interaction=${frames[index].ball_interaction_event_id || "none"}, events=${eventTypes})`);
+        throw new Error(`${currentFrame.frame_id} ball moves ${ballSpeed.toFixed(1)}m in one sample without an exit or goal event (from=${previousFrame.ball_x},${previousFrame.ball_y} to=${currentFrame.ball_x},${currentFrame.ball_y}, motion=${previousFrame.ball_motion}->${currentFrame.ball_motion}, interaction=${currentFrame.ball_interaction_event_id || "none"}, events=${frameEvents.map((event) => `${event.event_id}:${event.event_type}:${event.player_id}:${event.related_player_id}`).join("|")})`);
+      }
+      const strictMotionSpan = Number(currentFrame.match_second) >= LIVE_CUTOFF_SECONDS
+        || Number(currentFrame.match_second) >= 1600 && Number(currentFrame.match_second) <= 1645
+        || Number(currentFrame.match_second) >= 4635 && Number(currentFrame.match_second) <= 4680;
+      if (strictMotionSpan && shotExit && ballSpeed > 35.01) {
+        throw new Error(`${currentFrame.frame_id} shot exits at ${ballSpeed.toFixed(1)}m/s, above the 35m/s shot-speed ceiling (from=${previousFrame.ball_x},${previousFrame.ball_y} to=${currentFrame.ball_x},${currentFrame.ball_y}; ${frameEvents.map((event) => `${event.event_id}:${event.event_type}:${event.player_id}:${event.outcome}`).join("|")})`);
       }
     }
   }
@@ -1918,16 +3207,17 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
     if (frame.ball_motion === "controlled" && frame.possession_player_id) {
       const holder = actorsById.get(frame.possession_player_id);
       if (!holder || Math.hypot(Number(frame.ball_x) - holder.x, Number(frame.ball_y) - holder.y) > 1.1) {
-        throw new Error(`${frame.frame_id} controlled ball is detached from its player`);
+        throw new Error(`${frame.frame_id} controlled ball is detached from ${frame.possession_player_id}: ball=${frame.ball_x},${frame.ball_y} actor=${holder?.x},${holder?.y} touch=${frame.ball_interaction_event_id}`);
       }
     }
     for (const actor of activeActors) {
       const prior = priorLocations.get(actor.person_id);
-      if (prior && prior.second === frame.match_second - 1 && prior.period === frame.period) {
-        const speed = Math.hypot(actor.x - prior.x, actor.y - prior.y);
-        if (speed > 10.51) throw new Error(`${frame.frame_id} ${actor.person_id} moves ${speed.toFixed(1)}m in one second (above the 10.5m/s match-speed ceiling)`);
+      const elapsedSeconds = prior ? (Number(frame.match_ms) - prior.matchMs) / 1000 : 0;
+      if (prior && elapsedSeconds > 0 && prior.period === frame.period) {
+        const speed = Math.hypot(actor.x - prior.x, actor.y - prior.y) / elapsedSeconds;
+        if (speed > 10.51) throw new Error(`${frame.frame_id} ${actor.person_id} moves at ${speed.toFixed(1)}m/s (above the 10.5m/s match-speed ceiling)`);
       }
-      priorLocations.set(actor.person_id, { x: actor.x, y: actor.y, second: frame.match_second, period: frame.period });
+      priorLocations.set(actor.person_id, { x: actor.x, y: actor.y, matchMs: Number(frame.match_ms), period: frame.period });
     }
     const poss = actorRows.find((actor) => actor.person_id === frame.possession_player_id);
     if (frame.possession_player_id && (!poss || poss.status !== "active" || poss.team !== frame.possession_team)) {
@@ -2003,17 +3293,303 @@ function assertDataset(events, frames, people, half1Seconds, half2Seconds, home,
   }
 }
 
+function assertCriticalTimelines(events, frames, people, home, away) {
+  const bySecond = new Map(frames.map((frame) => [Number(frame.match_second), frame]));
+  const byMatchMs = new Map(frames.map((frame) => [Number(frame.match_ms), frame]));
+  const byEventId = new Map(events.map((event) => [event.event_id, event]));
+  const incidentEvent = (chainId, eventType, second) => {
+    const event = events.find((item) => item.chain_id === chainId && item.event_type === eventType
+      && Number(item.match_second) === second);
+    if (!event) throw new Error(`${chainId} is missing ${eventType} at ${second}`);
+    return event;
+  };
+  const close = (a, b, tolerance = 0.03) => Math.abs(Number(a) - Number(b)) <= tolerance;
+  const assertControlled = (second, playerId, eventId) => {
+    const frame = bySecond.get(second);
+    const actor = JSON.parse(frame.actors).find((item) => item.person_id === playerId);
+    if (frame.ball_motion !== "controlled" || frame.possession_player_id !== playerId
+      || frame.ball_interaction_event_id !== eventId || !actor
+      || Math.hypot(Number(frame.ball_x) - Number(actor.x), Number(frame.ball_y) - Number(actor.y)) > 1.1) {
+      throw new Error(`Critical frame ${second} does not show ${playerId} controlling the ball after ${eventId}`);
+    }
+  };
+  const assertRoute = (second, event, receiverId) => {
+    const frame = bySecond.get(second);
+    if (frame.ball_motion !== "transfer" || frame.ball_interaction_event_id !== event.event_id
+      || frame.ball_from_player_id !== event.player_id || frame.ball_to_player_id !== receiverId
+      || frame.possession_player_id || !JSON.parse(event.participant_ids).includes(receiverId)
+      || Math.hypot(Number(frame.ball_x) - Number(event.location_x), Number(frame.ball_y) - Number(event.location_y)) > 1.1) {
+      throw new Error(`${event.event_id} route is not represented at frame ${second}`);
+    }
+  };
+  const assertStopped = (start, end, point, interactionBySecond) => {
+    for (let second = start; second <= end; second += 1) {
+      const frame = bySecond.get(second);
+      if (!frame || frame.ball_motion !== "stopped" || frame.possession_player_id
+        || !close(frame.ball_x, point.x) || !close(frame.ball_y, point.y)
+        || frame.ball_interaction_event_id !== interactionBySecond(second)) {
+        throw new Error(`Critical stoppage is not stationary and unpossessed at frame ${second}`);
+      }
+    }
+  };
+  const assertIncidentSamples = (kind, simulation, sampler) => {
+    const track = INCIDENT_TRACKING[kind];
+    const expectedDenseIds = new Set();
+    const stepCount = Math.round(simulation.duration / INCIDENT_TRACKING_SAMPLE_STEP);
+    for (let index = 0; index <= stepCount; index += 1) {
+      const time = Math.min(simulation.duration, index * INCIDENT_TRACKING_SAMPLE_STEP);
+      const matchMs = simulationMatchMilliseconds(kind, simulation, time);
+      const frame = byMatchMs.get(matchMs);
+      if (!frame) throw new Error(`${kind} simulation sample ${index} at ${matchMs}ms is missing from frames.csv`);
+      if (matchMs % 1000 !== 0) expectedDenseIds.add(frame.frame_id);
+      const state = sampler(simulation, time);
+      const actors = new Map(JSON.parse(frame.actors).map((actor) => [actor.person_id, actor]));
+      for (const [role, id] of Object.entries(track.actors)) {
+        const expected = incidentActorMatchPoint(kind, state[role]);
+        const actual = actors.get(id);
+        if (!actual || Math.abs(Number(actual.x) - roundPitchCoordinate(expected.x)) > 0.0051
+          || Math.abs(Number(actual.y) - roundPitchCoordinate(expected.y)) > 0.0051) {
+          throw new Error(`${kind} ${role} coordinates at ${matchMs}ms differ from Tactical Eye`);
+        }
+      }
+      const expectedBall = incidentBallMatchPoint(kind, state.ball);
+      if (Math.abs(Number(frame.ball_x) - roundPitchCoordinate(expectedBall.x)) > 0.0051
+        || Math.abs(Number(frame.ball_y) - roundPitchCoordinate(expectedBall.y)) > 0.0051
+        || Math.abs(Number(frame.ball_z) - roundPitchCoordinate(expectedBall.z)) > 0.0051) {
+        throw new Error(`${kind} ball coordinates at ${matchMs}ms differ from Tactical Eye`);
+      }
+    }
+    const actualDenseIds = new Set(frames.filter((frame) => frame.frame_id.startsWith(`frame-incident-${kind}-`))
+      .map((frame) => frame.frame_id));
+    if (actualDenseIds.size !== expectedDenseIds.size
+      || [...expectedDenseIds].some((id) => !actualDenseIds.has(id))) {
+      throw new Error(`${kind} incident frames are not a complete 120 Hz Tactical Eye track`);
+    }
+  };
+  const assertAnchor = (kind, eventType, matchSecond) => {
+    const chainId = kind === "tackle" ? "incident-tackle-77" : "incident-offside";
+    const event = events.find((item) => item.chain_id === chainId && item.event_type === eventType);
+    if (!event || Number(event.match_ms) !== matchSecond * 1000
+      || Number(event.match_second) !== matchSecond) {
+      throw new Error(`${kind} ${eventType} event is not anchored to ${matchSecond}s`);
+    }
+  };
+  const offsideSimulation = buildOffsideSimulation();
+  const tackleSimulation = buildSimulation();
+  assertIncidentSamples("offside", offsideSimulation, sampleOffsideFrame);
+  assertIncidentSamples("tackle", tackleSimulation, sampleFrame);
+  assertAnchor("offside", "ball_recovery", INCIDENT_TRACKING.offside.anchorSecond - 1);
+  assertAnchor("offside", "pass", INCIDENT_TRACKING.offside.anchorSecond);
+  assertAnchor("tackle", "challenge", INCIDENT_TRACKING.tackle.anchorSecond);
+  assertAnchor("tackle", "foul_decision", INCIDENT_TRACKING.tackle.anchorSecond + 1);
+
+  // The offside incident has a complete turnover -> pass -> offside shot ->
+  // whistle/VAR -> restart chain, with no live possession during the review.
+  const offsideRecovery = incidentEvent("incident-offside", "ball_recovery", 1626);
+  const offsidePass = incidentEvent("incident-offside", "pass", 1627);
+  const offsideTouch = incidentEvent("incident-offside", "carry", 1628);
+  const offsideShot = incidentEvent("incident-offside", "shot", 1629);
+  const disallowedGoal = events.find((item) => item.chain_id === "incident-offside"
+    && item.event_type === "goal" && item.outcome === "disallowed" && Number(item.match_second) === 1629);
+  const offsideCall = incidentEvent("incident-offside", "offside_decision", 1630);
+  const offsideReview = incidentEvent("incident-offside", "var_review", 1633);
+  const offsideDelivery = incidentEvent("incident-offside", "restart_delivery", 1637);
+  const offsideResolution = incidentEvent("incident-offside", "restart_resolution", 1639);
+  if (!disallowedGoal || offsideShot.outcome !== "goal_disallowed" || disallowedGoal.parent_event_id !== offsideShot.event_id) {
+    throw new Error("Offside shot, disallowed goal, and incident chain do not agree");
+  }
+  assertControlled(1626, offsideRecovery.player_id, offsideRecovery.event_id);
+  assertRoute(1627, offsidePass, offsidePass.related_player_id);
+  assertControlled(1628, offsideTouch.player_id, offsideTouch.event_id);
+  const offsideShotFrame = bySecond.get(1629);
+  if (offsideShotFrame.ball_motion !== "goal" || offsideShotFrame.ball_interaction_event_id !== offsideShot.event_id
+    || offsideShotFrame.ball_to_player_id !== `GOAL-${offsideShot.team_code}`
+    || !close(offsideShotFrame.ball_x, offsideShot.target_x) || !close(offsideShotFrame.ball_y, 0)
+    || !close(disallowedGoal.location_x, offsideShotFrame.ball_x) || !close(disallowedGoal.location_y, offsideShotFrame.ball_y)) {
+    throw new Error("Offside shot does not reach the disallowed goal recorded by the event table");
+  }
+  const whistlePoint = JSON.parse(bySecond.get(1630).actors).find((actor) => actor.person_id === offsideCall.player_id);
+  if (!whistlePoint || !close(offsideCall.location_x, whistlePoint.x) || !close(offsideCall.location_y, whistlePoint.y)
+    || !close(offsideReview.location_x, whistlePoint.x) || !close(offsideReview.location_y, whistlePoint.y)) {
+    throw new Error("Offside decision and VAR coordinates do not match the flagged runner");
+  }
+  assertStopped(1630, 1636, { x: offsideShotFrame.ball_x, y: offsideShotFrame.ball_y },
+    (second) => second <= 1632 ? offsideCall.event_id : offsideReview.event_id);
+  assertRoute(1637, offsideDelivery, offsideDelivery.related_player_id);
+  assertControlled(1639, offsideResolution.possession_after_player_id, offsideResolution.event_id);
+
+  // The tackle chain requires a real lead-in pass, recovery and carries, contact,
+  // frozen foul review, then the awarded team's restart and first control.
+  const leadPass = events.find((item) => item.event_type === "pass" && Number(item.match_second) === 4645
+    && item.player_id === "MCI-20" && item.related_player_id === "MCI-8");
+  const leadCarry = events.find((item) => item.event_type === "carry" && Number(item.match_second) === 4651
+    && item.player_id === "MCI-8");
+  if (!leadPass || !leadCarry) throw new Error("Tackle incident is missing its linked lead-in pass or control");
+  assertRoute(4645, leadPass, leadPass.related_player_id);
+  let receptionSecond = null;
+  for (let second = 4646; second < 4651; second += 1) {
+    const frame = bySecond.get(second);
+    if (frame.possession_player_id === "MCI-8") { receptionSecond = second; break; }
+  }
+  if (receptionSecond === null) throw new Error("MCI-8 never receives the lead-in pass before the carry");
+  for (let second = 4646; second <= 4650; second += 1) {
+    const frame = bySecond.get(second);
+    if (frame.ball_interaction_event_id !== leadPass.event_id
+      || (second < receptionSecond && frame.possession_player_id)
+      || (second >= receptionSecond && frame.possession_player_id !== "MCI-8")) {
+      throw new Error(`Tackle lead-in pass has an invalid flight or reception at ${second}`);
+    }
+  }
+  assertControlled(4651, leadCarry.player_id, leadCarry.event_id);
+  for (const [second, type] of [[4654, "ball_recovery"], [4655, "carry"], [4656, "carry"]]) {
+    const event = incidentEvent("incident-tackle-77", type, second);
+    assertControlled(second, "ARS-7", event.event_id);
+  }
+  const tackle = incidentEvent("incident-tackle-77", "challenge", 4657);
+  const foulCall = incidentEvent("incident-tackle-77", "foul_decision", 4658);
+  const card = incidentEvent("incident-tackle-77", "card_shown", 4659);
+  const tackleReview = incidentEvent("incident-tackle-77", "var_review", 4663);
+  const tackleDelivery = incidentEvent("incident-tackle-77", "restart_delivery", 4672);
+  const tackleResolution = incidentEvent("incident-tackle-77", "restart_resolution", 4674);
+  const tacklePoint = { x: Number(tackle.location_x), y: Number(tackle.location_y) };
+  const contactFrame = bySecond.get(4657);
+  const contactState = sampleFrame(tackleSimulation, tackleSimulation.contactT);
+  const expectedContactBall = incidentBallMatchPoint("tackle", contactState.ball);
+  const whistleTime = tackleSimulation.events.find((item) => item.id === "whistle").t;
+  const whistleState = sampleFrame(tackleSimulation, whistleTime);
+  const expectedWhistleBall = incidentBallMatchPoint("tackle", whistleState.ball);
+  const expectedImpact = incidentActorMatchPoint("tackle", tackleSimulation.impact.point);
+  if (contactFrame.ball_motion !== "controlled" || contactFrame.possession_player_id !== "ARS-7"
+    || !close(contactFrame.ball_x, expectedContactBall.x) || !close(contactFrame.ball_y, expectedContactBall.y)
+    || !close(tacklePoint.x, expectedImpact.x) || !close(tacklePoint.y, expectedImpact.y)
+    || !close(foulCall.location_x, tacklePoint.x) || !close(foulCall.location_y, tacklePoint.y)
+    || !close(card.location_x, tacklePoint.x) || !close(card.location_y, tacklePoint.y)
+    || !close(tackleReview.location_x, tacklePoint.x) || !close(tackleReview.location_y, tacklePoint.y)) {
+    throw new Error("Tackle actors, contact point, foul/card/VAR locations, or simulation ball are not aligned");
+  }
+  assertStopped(4658, 4671, expectedWhistleBall, () => foulCall.event_id);
+  assertRoute(4672, tackleDelivery, tackleDelivery.related_player_id);
+  assertControlled(4674, tackleResolution.possession_after_player_id, tackleResolution.event_id);
+
+  // From 78:32 to full time, validate every shot's shooter location and its
+  // paired outcome, every whistle's frozen interval, and each goalkeeper's end.
+  const fullTime = events.find((event) => event.event_type === "phase" && event.phase === "full_time");
+  if (!fullTime || Number(fullTime.match_second) !== Number(frames.at(-1).match_second)) {
+    throw new Error("Full-time event does not coincide with the final frame");
+  }
+  const finalFrame = bySecond.get(Number(fullTime.match_second));
+  if (finalFrame.ball_motion !== "stopped" || finalFrame.possession_player_id
+    || JSON.parse(finalFrame.event_ids).some((id) => id !== fullTime.event_id)) {
+    throw new Error("Full-time frame still contains live possession or post-whistle actions");
+  }
+  for (const event of events.filter((item) => Number(item.match_second) >= LIVE_CUTOFF_SECONDS)) {
+    const frame = bySecond.get(Number(event.match_second));
+    if (!JSON.parse(frame.event_ids).includes(event.event_id)) throw new Error(`${event.event_id} is missing from its closing frame`);
+    if (["pass", "restart_delivery", "shot", "penalty_attempt", "carry", "ball_recovery", "save", "restart_resolution"].includes(event.event_type)
+      && frame.ball_interaction_event_id !== event.event_id) {
+      const linkedLaterAction = JSON.parse(frame.event_ids).map((id) => byEventId.get(id)).some((later) => later
+        && later.sequence > event.sequence && later.event_id === frame.ball_interaction_event_id);
+      if (!linkedLaterAction) throw new Error(`${event.event_id} is not the ball interaction represented at frame ${event.match_second}`);
+    }
+    if (event.event_type === "restart_delivery"
+      && (!close(frame.ball_x, event.location_x) || !close(frame.ball_y, event.location_y)
+        || frame.ball_from_player_id !== event.player_id || frame.ball_to_player_id !== event.related_player_id)) {
+      throw new Error(`${event.event_id} restart delivery does not launch from the taker's location toward its receiver`);
+    }
+    if (event.event_type === "shot") {
+      const shooter = JSON.parse(frame.actors).find((actor) => actor.person_id === event.player_id);
+      if (!shooter || !close(event.location_x, shooter.x) || !close(event.location_y, shooter.y)) {
+        throw new Error(`${event.event_id} shot location is detached from its shooter`);
+      }
+      if (event.outcome === "wide") {
+        const out = events.find((candidate) => candidate.event_type === "ball_out" && candidate.parent_event_id === event.event_id);
+        if (!out || Number(out.match_second) < Number(event.match_second)
+          || Number(out.match_second) > Number(event.match_second) + 2
+          || frame.ball_motion !== "out" || frame.ball_to_player_id !== "OUT") {
+          throw new Error(`${event.event_id} wide shot has no timely, visible ball-out event`);
+        }
+      } else if (event.outcome === "saved") {
+        const save = events.find((candidate) => candidate.event_type === "save" && candidate.parent_event_id === event.event_id);
+        if (!save) throw new Error(`${event.event_id} saved shot has no linked save`);
+        assertControlled(Number(save.match_second), save.player_id, save.event_id);
+      }
+    }
+    if (event.event_type === "ball_out" && (frame.ball_motion !== "out" || frame.possession_player_id)) {
+      throw new Error(`${event.event_id} ball-out event does not stop live possession`);
+    }
+    if (event.event_type === "ball_out") {
+      const delivery = events.find((candidate) => candidate.event_type === "restart_delivery"
+        && candidate.chain_id === event.chain_id && Number(candidate.match_second) > Number(event.match_second));
+      if (!delivery) throw new Error(`${event.event_id} has no linked restart after the ball leaves play`);
+      const stoppedAt = { x: Number(frame.ball_x), y: Number(frame.ball_y) };
+      for (let second = Number(event.match_second); second < Number(delivery.match_second); second += 1) {
+        const stopped = bySecond.get(second);
+        if (["transfer", "shot", "controlled", "goal"].includes(stopped.ball_motion)
+          || stopped.possession_player_id || !close(stopped.ball_x, stoppedAt.x) || !close(stopped.ball_y, stoppedAt.y)) {
+          throw new Error(`${event.chain_id} ball moves or regains possession between out-of-play and restart`);
+        }
+      }
+    }
+    if (["foul_decision", "offside_decision", "corner_awarded", "penalty_awarded"].includes(event.event_type)
+      && (frame.ball_motion !== "stopped" || frame.possession_player_id)) {
+      throw new Error(`${event.event_id} closing whistle is not stationary and unpossessed`);
+    }
+    if (event.event_type === "foul_decision" && event.restart_type !== "penalty") {
+      const delivery = events.find((candidate) => candidate.chain_id === event.chain_id && candidate.event_type === "restart_delivery");
+      if (!delivery) throw new Error(`${event.event_id} has no awarded free-kick restart`);
+      for (let second = Number(event.match_second); second < Number(delivery.match_second); second += 1) {
+        const stopped = bySecond.get(second);
+        if (stopped.ball_motion !== "stopped" || stopped.possession_player_id
+          || !close(stopped.ball_x, frame.ball_x) || !close(stopped.ball_y, frame.ball_y)) {
+          throw new Error(`${event.chain_id} ball moves or gains possession before its restart`);
+        }
+      }
+    }
+  }
+
+  const goalkeepers = people.filter((person) => !person.role && person.pos === "GK");
+  for (const frame of frames) {
+    const second = Number(frame.match_second);
+    const strictSpan = second >= LIVE_CUTOFF_SECONDS || second >= 1600 && second <= 1645 || second >= 4635 && second <= 4680;
+    if (!strictSpan) continue;
+    const period = Number(frame.period);
+    const actors = new Map(JSON.parse(frame.actors).map((actor) => [actor.person_id, actor]));
+    for (const keeper of goalkeepers) {
+      const actor = actors.get(playerId(keeper.team, keeper.no));
+      if (!actor || actor.status !== "active") continue;
+      const defendsPositiveGoal = (keeper.team === home) === (period === 2);
+      const goalX = defendsPositiveGoal ? 52.5 : -52.5;
+      if ((defendsPositiveGoal && Number(actor.x) < 0) || (!defendsPositiveGoal && Number(actor.x) > 0)
+        || Math.hypot(Number(actor.x) - goalX, Number(actor.y)) > 20) {
+        throw new Error(`${frame.frame_id} goalkeeper ${actor.person_id} is outside the defensive half/penalty area`);
+      }
+    }
+  }
+}
+
 export function buildMatchTables({ people, home, away, half1Seconds, half2Seconds }) {
   const events = buildDetailedEvents({ people, home, away, half1Seconds, half2Seconds });
-  const movementProfiles = buildMovementProfiles(people, { home, away, half1Seconds, half2Seconds });
+  const movementProfiles = buildMovementProfiles(people);
   const frames = buildFrames(events, { people, home, away, half1Seconds, half2Seconds, movementProfiles });
+  reconcileCriticalFrames(events, frames, { home, away, half1Seconds });
   assertDataset(events, frames, people, half1Seconds, half2Seconds, home, away);
+  assertCriticalTimelines(events, frames, people, home, away);
   const movementSummaries = summarizePlayerMovement(frames);
   const playerRatings = buildPlayerRatingsBySecond(events, frames, people);
   const movementTargets = people.filter((person) => !person.role).map((person) => {
     const id = playerId(person.team, person.no);
     const activeSeconds = playedSeconds(person, { home, half1Seconds, half2Seconds });
     const movement = movementSummaries.get(id) || { distance: 0, liveDistance: 0, seconds: 0, peakSpeed: 0, sprintSamples: 0 };
+    const distancePer90 = activeSeconds ? movement.distance * (90 * 60 / activeSeconds) / 1000 : 0;
+    // Short substitute spells inflate distance-per-90; allow a wider rate while
+    // still checking their absolute distance and peak speed in the frame table.
+    const distancePer90Ceiling = activeSeconds <= 30 * 60 ? 18 : 16.5;
+    if (person.pos !== "GK" && activeSeconds >= 20 * 60 && (distancePer90 < 8 || distancePer90 > distancePer90Ceiling)) {
+      throw new Error(`${id} generated ${distancePer90.toFixed(2)}km per 90, outside the 8-16.5km outfield match range`);
+    }
+    if (person.pos !== "GK" && movement.peakSpeed > 9.0) {
+      throw new Error(`${id} generated a ${movement.peakSpeed.toFixed(1)}m/s peak above the 9.0m/s football speed ceiling`);
+    }
     if (person.pos === "GK" && activeSeconds > 0 && (movement.distance < 4000 || movement.distance > 6000)) {
       throw new Error(`${id} goalkeeper movement ${Math.round(movement.distance)}m falls outside the 4-6km match range`);
     }

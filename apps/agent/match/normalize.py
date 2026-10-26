@@ -381,16 +381,38 @@ def normalize_rules(rows: list[dict]) -> list[dict]:
 
 
 def normalize_precedents(rows: list[dict]) -> list[dict]:
-    return [
-        {
-            **row,
-            "matchweek": as_int(row.get("matchweek")),
-            "similarity": as_float(row.get("similarity")),
-            "law_refs": json_or(row.get("law_refs"), []),
-            "tags": json_or(row.get("tags"), []),
-        }
-        for row in rows
-    ]
+    result = []
+    for row in rows:
+        clean = {key: value for key, value in row.items() if key not in {"similarity", "match_incident_id"}}
+        law_refs = json_or(row.get("law_refs"), [])
+        tags = json_or(row.get("tags"), [])
+        matchweek = as_int(row.get("matchweek"))
+        result.append(
+            {
+                **clean,
+                "matchweek": matchweek,
+                "law_refs": law_refs,
+                "tags": tags,
+                "caseId": row.get("id") or "",
+                "incidentType": row.get("incident_type") or "",
+                "incidentSubtype": row.get("incident_subtype") or "",
+                "lawEdition": row.get("law_edition") or "",
+                "lawRefs": law_refs,
+                "onFieldDecision": row.get("on_field_decision") or "",
+                "varAction": row.get("var_action") or "",
+                "finalDecision": row.get("final_decision") or "",
+                "assessment": {
+                    "status": row.get("assessment_status") or "not_stated",
+                    "authority": row.get("assessment_authority") or "",
+                    "summary": row.get("assessment_text") or "",
+                },
+                "source": {
+                    "title": row.get("source_title") or "",
+                    "url": row.get("source_url") or "",
+                },
+            }
+        )
+    return result
 
 
 def decision_from_event(event: dict) -> dict:

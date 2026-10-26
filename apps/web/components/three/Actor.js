@@ -155,7 +155,7 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
         return new THREE.CanvasTexture(c);
     }, []);
     const label = useMemo(() => {
-        const tex = makeLabelTexture(side === 'home' ? 'MAN CITY' : 'ARSENAL', kit.number, side === 'home' ? '#6CABDD' : '#EF0107', role === 'tackler' ? 'Tackler · #6' : 'Carrier · #8');
+        const tex = makeLabelTexture(side === 'home' ? 'MAN CITY' : 'ARSENAL', kit.number, side === 'home' ? '#6CABDD' : '#EF0107', role === 'tackler' ? 'Tackler · #24' : 'Carrier · #7');
         const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
         const sprite = new THREE.Sprite(mat);
         sprite.layers.set(3);

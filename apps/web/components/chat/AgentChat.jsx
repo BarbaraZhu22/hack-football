@@ -10,7 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Conversation,
   ConversationContent,
-  ConversationEmpty,
 } from "@/components/ui/conversation";
 import { Message, MessageContent } from "@/components/ui/message";
 import { PromptInput } from "@/components/ui/prompt-input";
@@ -23,16 +22,14 @@ function tabFromPathname(pathname) {
 
 // Conversation body without the card chrome, so a page can embed the agent
 // inside its own panel (the overview desk does exactly that).
-export function AgentConversation({ placeholder }) {
+const DEFAULT_GREETING = "Football desk agent is ready. Ask about the pitch, match, or tactics.";
+
+export function AgentConversation({ placeholder, context = {}, initialMessage = DEFAULT_GREETING }) {
   const pathname = usePathname();
   const { run } = useScene();
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content:
-        "Football desk agent is ready. Ask about the pitch, match, or tactics.",
-    },
-  ]);
+  const [messages, setMessages] = useState(() => initialMessage
+    ? [{ role: "assistant", content: initialMessage }]
+    : []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
 
@@ -45,7 +42,7 @@ export function AgentConversation({ placeholder }) {
     try {
       const result = await sendChatMessage({
         messages: nextMessages,
-        context: { tab: tabFromPathname(pathname) },
+        context: { tab: tabFromPathname(pathname), ...context },
       });
 
       if (result.message?.content) {
@@ -65,15 +62,11 @@ export function AgentConversation({ placeholder }) {
   return (
     <Conversation className="min-h-0 flex-1">
       <ConversationContent>
-        {messages.length === 0 ? (
-          <ConversationEmpty>No messages yet.</ConversationEmpty>
-        ) : (
-          messages.map((message, index) => (
-            <Message key={`${message.role}-${index}`} from={message.role}>
-              <MessageContent from={message.role}>{message.content}</MessageContent>
-            </Message>
-          ))
-        )}
+        {messages.map((message, index) => (
+          <Message key={`${message.role}-${index}`} from={message.role}>
+            <MessageContent from={message.role}>{message.content}</MessageContent>
+          </Message>
+        ))}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </ConversationContent>
       <PromptInput

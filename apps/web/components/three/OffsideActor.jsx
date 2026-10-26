@@ -96,7 +96,7 @@ function sampleToeAtTime(time, { sim, actorGroup, rig, runPlayer, passPlayer, ro
 function makeLabel(side, role) {
   const color = side === "home" ? "#6CABDD" : "#EF0107";
   const name = side === "home" ? "MAN CITY" : "ARSENAL";
-  const number = side === "home" ? "6" : "8";
+  const number = role === "defender" ? "16" : role === "passer" ? "8" : "9";
   const roleLabel = role === "passer" ? "Passer" : role === "receiver" ? "Runner" : "Defender";
   const canvas = document.createElement("canvas");
   canvas.width = 1024;

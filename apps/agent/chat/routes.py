@@ -15,6 +15,7 @@ class ChatMessage(BaseModel):
 
 class ChatContext(BaseModel):
     tab: Literal["pitch", "match", "tactics"] = "pitch"
+    incident: dict[str, Any] | None = None
 
 
 class ChatRequest(BaseModel):

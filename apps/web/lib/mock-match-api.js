@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "../data");
+const DATA_DIR = join(process.cwd(), "data");
 const FIRST_HALF_SECONDS = 46 * 60;
 const SECOND_HALF_SECONDS = 48 * 60;
 const MATCH_SECONDS = FIRST_HALF_SECONDS + SECOND_HALF_SECONDS;
@@ -111,16 +110,18 @@ export function formatClock(totalSeconds) {
 }
 
 export function parseClock(value = DEFAULT_LIVE_CLOCK) {
-  const added = /^(\d+)\+(\d+):([0-5]\d)$/.exec(value);
+  const added = /^(\d+)\+(\d+):([0-5]\d)(?:\.(\d{1,3}))?$/.exec(value);
   if (added) {
     const base = Number(added[1]);
     const extra = Number(added[2]);
     const second = Number(added[3]);
-    return (base + extra + (base >= 90 ? 1 : 0)) * 60 + second;
+    const milliseconds = Number((added[4] || "").padEnd(3, "0")) / 1000;
+    return (base + extra + (base >= 90 ? 1 : 0)) * 60 + second + milliseconds;
   }
-  const match = /^(\d+):([0-5]\d)$/.exec(value);
+  const match = /^(\d+):([0-5]\d)(?:\.(\d{1,3}))?$/.exec(value);
   if (!match) throw new Error("Clock must use MM:SS or period-added-time format.");
-  return Number(match[1]) * 60 + Number(match[2]);
+  const milliseconds = Number((match[3] || "").padEnd(3, "0")) / 1000;
+  return Number(match[1]) * 60 + Number(match[2]) + milliseconds;
 }
 
 function playerName(peopleById, id) {
@@ -146,6 +147,8 @@ function normalizeEventType(row) {
     case "restart_delivery": return row.restart_type === "corner" ? "corner-delivery" : "free-kick-delivery";
     case "restart_resolution": return "restart-resolution";
     case "aerial_duel": return "aerial-duel";
+    case "ball_recovery": return "ball-recovery";
+    case "carry": return "carry";
     case "handball_contact": return "handball";
     default: return row.event_type;
   }
@@ -385,13 +388,36 @@ function normalizeRules(rows) {
 }
 
 function normalizePrecedents(rows) {
-  return rows.map((row) => ({
-    ...row,
-    matchweek: numberOrNull(row.matchweek),
-    similarity: numberOrNull(row.similarity),
-    law_refs: jsonOr(row.law_refs, []),
-    tags: jsonOr(row.tags, []),
-  }));
+  return rows.map((row) => {
+    const cleanRow = Object.fromEntries(
+      Object.entries(row).filter(([key]) => !["similarity", "match_incident_id"].includes(key)),
+    );
+    const lawRefs = jsonOr(row.law_refs, []);
+    const tags = jsonOr(row.tags, []);
+    return {
+      ...cleanRow,
+      matchweek: numberOrNull(row.matchweek),
+      law_refs: lawRefs,
+      tags,
+      caseId: row.id || "",
+      incidentType: row.incident_type || "",
+      incidentSubtype: row.incident_subtype || "",
+      lawEdition: row.law_edition || "",
+      lawRefs,
+      onFieldDecision: row.on_field_decision || "",
+      varAction: row.var_action || "",
+      finalDecision: row.final_decision || "",
+      assessment: {
+        status: row.assessment_status || "not_stated",
+        authority: row.assessment_authority || "",
+        summary: row.assessment_text || "",
+      },
+      source: {
+        title: row.source_title || "",
+        url: row.source_url || "",
+      },
+    };
+  });
 }
 
 export function decisionFromEvent(event) {
@@ -521,7 +547,9 @@ export async function loadMockMatchDataset() {
   const people = normalizePeople(peopleRows);
   const peopleById = new Map(people.filter((person) => person.personId).map((person) => [person.personId, person]));
   const events = eventRows.map((row) => createEvent(row, peopleById));
-  const frames = frameRows.map(createFrame);
+  const frames = frameRows
+    .filter((row) => !row.frame_id.startsWith("frame-incident-"))
+    .map(createFrame);
   const ratings = flattenRatingRows(ratingRows).map(createPlayerRating);
   return {
     match: MATCH,
@@ -533,6 +561,33 @@ export async function loadMockMatchDataset() {
     officials: normalizeOfficials(officialRows),
     rules: normalizeRules(ruleRows),
     precedents: normalizePrecedents(precedentRows),
+  };
+}
+
+export async function loadMockPrecedentsDataset() {
+  return normalizePrecedents(await readTable("precedents.csv"));
+}
+
+export async function loadMockTrackingDataset() {
+  const [frameRows, peopleRows] = await Promise.all([
+    readTable("frames.csv"),
+    readTable("people.csv"),
+  ]);
+  return {
+    match: MATCH,
+    frames: frameRows.map(createFrame),
+    people: normalizePeople(peopleRows),
+  };
+}
+
+export function createMockTrackingWindow(dataset, fromSeconds, throughSeconds) {
+  const frames = dataset.frames.filter(
+    (frame) => fromSeconds <= frame.clockSeconds && frame.clockSeconds <= throughSeconds,
+  );
+  return {
+    match: dataset.match,
+    frames,
+    people: dataset.people,
   };
 }
 
@@ -562,5 +617,6 @@ export function createMockSnapshot(dataset, throughSeconds = parseClock(DEFAULT_
     officials: dataset.officials,
     rules: dataset.rules,
     precedents: dataset.precedents,
+    dataSource: { ok: true, backend: "local-csv" },
   };
 }

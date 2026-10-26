@@ -53,7 +53,7 @@ function buildReport() {
       description: "Late sliding challenge from side-rear. Studs-first contact above the right ankle; no clean ball contact.",
     },
     assessment: {
-      recommendation: "RED CARD — serious foul play (Law 12.2)",
+      recommendation: "RED CARD — serious foul play (Law 12.4)",
       onField: ACTUAL_DECISION.onField,
       final: ACTUAL_DECISION.final,
       confidence: ACTUAL_DECISION.confidence,
@@ -89,7 +89,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">Panel recommendation</Badge>
-              <span className="text-xs text-muted-foreground">Law 12.2 · Serious foul play</span>
+              <span className="text-xs text-muted-foreground">Law 12.4 · Serious foul play</span>
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <h2 className="text-3xl font-bold tracking-tight text-destructive">RED CARD</h2>
@@ -183,7 +183,7 @@ function LawsView() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><Badge variant="secondary" className="w-fit">IFAB Laws of the Game · 2025/26</Badge><CardTitle className="mt-2">Law 12 — Fouls & misconduct</CardTitle></CardHeader>
+        <CardHeader><Badge variant="secondary" className="w-fit">IFAB Laws of the Game · 2026/27</Badge><CardTitle className="mt-2">Law 12 — Fouls & misconduct</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
           {LAW_LINKS.map((law) => (
             <a key={law.ref} href={law.url} target="_blank" rel="noreferrer" className="rounded-lg border p-4 transition hover:border-primary/50 hover:bg-muted/30">
