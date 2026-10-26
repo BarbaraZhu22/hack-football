@@ -3,6 +3,7 @@ import {
   decisionFromEvent,
   deriveStats,
   formatClock,
+  frameAtCursor,
   loadMockMatchDataset,
   MAJOR_EVENT_TYPES,
   parseClock,
@@ -55,7 +56,6 @@ async function* localMatchStream(afterSeconds, delayMs, signal) {
     ...dataset.frames.map((frame) => frame.clockSeconds),
     ...allEvents.map((event) => event.clockSeconds),
   );
-  const frameByTime = new Map(dataset.frames.map((frame) => [frame.clockSeconds, frame]));
   const ratingsBySecond = new Map();
   for (const rating of dataset.ratings) {
     const ratings = ratingsBySecond.get(rating.matchSecond) || [];
@@ -86,7 +86,7 @@ async function* localMatchStream(afterSeconds, delayMs, signal) {
     const tick = {
       clock: formatClock(nextSeconds),
       match: { ...dataset.match, score: scoreAt(knownEvents) },
-      frame: frameByTime.get(nextSeconds) || null,
+      frame: frameAtCursor(dataset.frames, nextSeconds),
       ratings: ratingsBySecond.get(nextSeconds) || [],
       events: nextEvents.filter((event) => event.type !== "phase"),
       phases: nextEvents.filter((event) => event.type === "phase"),

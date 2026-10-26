@@ -1,8 +1,8 @@
 # Overview data
 
-The Overview reads its mock response from `events.csv` and `frames.csv` through the local match API. Event rows carry stable IDs, actor references, chain links, decisions, score state, shot/pass/duel/foul/card/set-piece metrics, incident IDs, and factual commentary. Tracking rows link back to every event at the same time and include the complete player/official positions and on-pitch status.
+The Overview loads `GET /api/match` (remote PostgreSQL via the agent, or CSV fallback), then `GET /api/match/stream?after=<cursor>`. Event rows carry stable IDs, actor references, chain links, decisions, score state, shot/pass/duel/foul/card/set-piece metrics, incident IDs, and factual commentary.
 
-`player-ratings.csv` stores one row per `match_second` with a `ratings` JSON array (all active players that second). The API expands it to the same flat rating objects as before. The initial 78:32 snapshot returns history through that clock; each SSE tick adds that second's frame, events, and ratings.
+**Backend time is authoritative:** the UI uses snapshot and tick **`clock`** / **`cursor`** only. The snapshot returns one **`frame`** at the cursor (not a full `frames[]` history) and **`ratings`** for that cursor second only; each SSE tick adds that second's frame, events, and ratings.
 
 ## Timelines and commentary
 
@@ -13,8 +13,8 @@ The Overview reads its mock response from `events.csv` and `frames.csv` through 
 
 ## Overview statistics and motion
 
-Possession is calculated from tracking frames. Match stats are recalculated from the events and frames available at the current clock. Momentum is recalculated on every live tick in two-minute buckets using a trailing five-minute window: possession share (20%), attacking final-third control (25%, with the attacking direction switched at half-time), and shot/goal/penalty/corner pressure (55%, with shots weighted by xG and whether they are on target). The bucket values are smoothed across adjacent buckets and bounded from -1 (away pressure) to +1 (home pressure). The chart places each bucket at its match-time position and advances its live edge with the clock. The lineup pitch uses the latest frame's active players and positions; a substitution therefore changes the displayed personnel.
+Possession is calculated from per-second tracking samples (deduplicated from frame rows through the cursor). Match stats are recalculated from the events and frames available at the current clock. On CSV fallback, momentum uses the documented two-minute bucket / five-minute window formula with event pressure; on PostgreSQL the agent uses its built-in momentum series. The chart advances its live edge with **`clock.seconds`**. The lineup pitch uses the current **`frame`** from the snapshot or latest tick; a substitution changes displayed personnel when the tick frame updates.
 
 ## Initial and live data
 
-The first request is `GET /api/match?through=78:32`, which returns all events and frames before that clock. The client then keeps one SSE connection open to receive each following second. The mock period lengths are 46:00 (45 minutes + 1 added minute) and 48:00 (45 minutes + 3 added minutes), ending at 90+3.
+The first request is `GET /api/match` (default live entry 78:32). The client opens SSE with `after` set to the snapshot **`cursor`**. Mock period lengths are 46:00 (first half) and 48:00 (second half), ending at 90+3.

@@ -677,6 +677,48 @@ export async function loadMockTrackingDataset() {
   };
 }
 
+export function frameAtCursor(frames, cursorSeconds) {
+  const second = cursorSeconds;
+  const secondMs = second * 1000;
+  let candidates = frames.filter(
+    (frame) =>
+      frame.timeMilliseconds <= secondMs &&
+      (second === 0 || frame.timeMilliseconds > (second - 1) * 1000),
+  );
+  if (!candidates.length) {
+    candidates = frames.filter((frame) => Math.floor(frame.timeSeconds) === second);
+  }
+  if (!candidates.length) return null;
+  return candidates.reduce((best, frame) =>
+    frame.timeMilliseconds > best.timeMilliseconds ? frame : best,
+  );
+}
+
+function dedupeFramesForMetrics(frames) {
+  const bySecond = new Map();
+  for (const frame of frames) {
+    const second = Math.floor(frame.timeSeconds);
+    const existing = bySecond.get(second);
+    if (!existing || frame.timeMilliseconds > existing.timeMilliseconds) {
+      bySecond.set(second, frame);
+    }
+  }
+  return [...bySecond.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, frame]) => frame);
+}
+
+function lightMetricFrame(row) {
+  const teamCode = row.possession?.teamCode || "";
+  return {
+    timeMilliseconds: row.timeMilliseconds,
+    timeSeconds: row.timeSeconds,
+    period: row.period,
+    possession: { teamCode },
+    ball: { x: row.ball?.x ?? 0 },
+  };
+}
+
 export function createMockTrackingWindow(dataset, fromSeconds, throughSeconds) {
   const frames = dataset.frames.filter(
     (frame) => fromSeconds <= frame.clockSeconds && frame.clockSeconds <= throughSeconds,
@@ -692,8 +734,12 @@ export function createMockSnapshot(dataset, throughSeconds = parseClock(DEFAULT_
   const withinWindow = (item) => item.timeMilliseconds <= throughSeconds * 1000;
   const events = dataset.events.filter(withinWindow);
   const phases = dataset.phases.filter(withinWindow);
-  const frames = dataset.frames.filter(withinWindow);
-  const ratings = dataset.ratings.filter((rating) => rating.timeMilliseconds <= throughSeconds * 1000);
+  const framesInWindow = dataset.frames.filter(withinWindow);
+  const metricFrames = dedupeFramesForMetrics(framesInWindow).map(lightMetricFrame);
+  const frame = frameAtCursor(framesInWindow, throughSeconds);
+  const ratings = dataset.ratings.filter(
+    (rating) => Math.floor(rating.matchSecond) === throughSeconds,
+  );
   const allEvents = [...events, ...phases].sort((left, right) => left.timeMilliseconds - right.timeMilliseconds || left.sequence - right.sequence);
   const timelineEvents = events.filter(
     (event) => (event.timelineEvent || event.type === "sub") && MAJOR_EVENT_TYPES.has(event.type),
@@ -702,15 +748,15 @@ export function createMockSnapshot(dataset, throughSeconds = parseClock(DEFAULT_
   const score = scoreAt(allEvents);
   return {
     match: { ...dataset.match, score },
-    stats: deriveStats(events, frames),
+    stats: deriveStats(events, metricFrames),
     clock: formatClock(throughSeconds),
     cursor: throughSeconds,
     events,
     timelineEvents,
     decisions,
-    momentum: deriveMomentum(events, frames),
+    momentum: deriveMomentum(events, metricFrames),
     phases,
-    frames,
+    frame,
     ratings,
     people: dataset.people,
     officials: dataset.officials,

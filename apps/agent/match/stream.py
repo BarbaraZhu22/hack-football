@@ -11,6 +11,7 @@ from match.normalize import (
     derive_stats,
     score_at,
 )
+from match.frame_picker import frame_for_elapsed_second
 from match.snapshot import create_snapshot
 from config import match_tick_ms
 from db.connection import db_connection
@@ -20,21 +21,6 @@ def parse_after_seconds(value: str) -> int:
     if value.isdigit():
         return int(value)
     return parse_clock(value)
-
-
-def frame_for_elapsed_second(frames: list[dict], second: int) -> dict | None:
-    second_ms = second * 1000
-    candidates = [
-        frame
-        for frame in frames
-        if frame["timeMilliseconds"] <= second_ms
-        and (second == 0 or frame["timeMilliseconds"] > (second - 1) * 1000)
-    ]
-    if not candidates:
-        candidates = [frame for frame in frames if int(frame["timeSeconds"]) == second]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda frame: frame["timeMilliseconds"])
 
 
 async def match_event_stream(after_value: str) -> AsyncIterator[str]:

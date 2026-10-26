@@ -504,6 +504,27 @@ def _side_aggregate(events: list[dict], frames: list[dict], side: str) -> dict:
     }
 
 
+def metrics_frame_from_row(row: dict) -> dict:
+    team_code = row.get("possession_team") or ""
+    return {
+        "timeMilliseconds": int(float(row["match_ms"])),
+        "timeSeconds": float(row["match_second"]),
+        "period": int(float(row["period"])),
+        "possession": {"teamCode": team_code},
+        "ball": {"x": float(row["ball_x"])},
+    }
+
+
+def dedupe_frames_for_metrics(frames: list[dict]) -> list[dict]:
+    by_second: dict[int, dict] = {}
+    for frame in frames:
+        second = int(frame["timeSeconds"])
+        existing = by_second.get(second)
+        if not existing or frame["timeMilliseconds"] > existing["timeMilliseconds"]:
+            by_second[second] = frame
+    return [by_second[second] for second in sorted(by_second)]
+
+
 def derive_stats(events: list[dict], frames: list[dict]) -> list[dict]:
     home = _side_aggregate(events, frames, "home")
     away = _side_aggregate(events, frames, "away")

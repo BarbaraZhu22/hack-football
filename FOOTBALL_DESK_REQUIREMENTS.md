@@ -222,7 +222,7 @@ Supported action types (extending the list requires updating `contracts/agent.js
 
 ### Match
 
-- Load its initial snapshot via `/api/match` and live updates via `/api/match/stream`.
+- Load its initial snapshot via `/api/match` and live updates via `/api/match/stream`, using backend **`clock`** / **`cursor`** as the only live time source (slim snapshot: single `frame`, cursor-second ratings, no `frames[]` in the initial payload).
 - Match-specific cards and lists in `components/match/`.
 
 ### Tactics

@@ -2,11 +2,19 @@
 
 The overview reads one historical snapshot, then continues through a single server-sent events (SSE) connection. Next.js routes proxy to the Python agent, which reads PostgreSQL. When the agent is down or returns a server error, the same routes read the CSV tables under `apps/web/data` and replay locally.
 
+## Time authority (SSOT)
+
+The snapshot and each SSE tick expose **`cursor`** (integer elapsed seconds) and **`clock`** (display object with `seconds`, `label`, `finished`). The client must treat these as the live match time. Do not infer time from local constants or from optional frame labels.
+
+All snapshot fields are aligned to **`cursor`**: events through `match_ms <= cursor * 1000`, stats/momentum from deduplicated per-second frame metrics, **`frame`** from the shared frame picker at `cursor`, and **`ratings`** from the single `player_ratings` row for that second only.
+
+If **`frame`** is `null`, **`clock`** and **`cursor`** are still valid; the UI shows the backend clock without inventing a tracking frame.
+
 ## Snapshot
 
-`GET /api/match?through=78:32` returns match metadata, the calculated score and statistics, all events, tracking frames, and player-rating rows up to that absolute match clock, phase rows, timeline decisions, the momentum series, players, officials, laws, and precedents. Successful agent responses include `dataSource.backend: "postgresql"`. CSV fallback responses use `"local-csv"`.
+`GET /api/match` (optional `?through=78:32`; default live entry from server config) returns match metadata, score, statistics, all events through the cursor, a single **`frame`**, player ratings for the cursor second only, phases, timeline decisions, momentum, players, officials, laws, and precedents. The response does **not** include a `frames[]` array. Successful agent responses include `dataSource.backend: "postgresql"`. CSV fallback uses `"local-csv"`.
 
-The initial clock is 78:32. Since the first half is 46 minutes long, the snapshot includes the full first period and the first 32:32 of the second period. The first half is 45 minutes plus one minute of added time. The second half is 45 minutes plus three minutes of added time. Full time is stored at 94:00 elapsed and displayed as 90+3:00.
+The default live entry is 78:32 (`cursor` 4712). Period lengths: first half 46:00, second half 48:00, full time at 94:00 displayed as 90+3:00.
 
 ## Historical precedent table
 
@@ -34,7 +42,7 @@ Every player or official in `participant_ids` is present in the linked frame. `f
 
 ## Live stream
 
-`GET /api/match/stream?after=4712` opens one SSE connection. It sends one clock tick per second, the frame and all player-rating rows for that second, newly recorded events/decisions/phases, and updated statistics and momentum derived from the current event/frame history.
+`GET /api/match/stream?after=4712` opens one SSE connection (`after` must match the snapshot **`cursor`**). It sends one clock tick per second, the frame and all player-rating rows for that second, newly recorded events/decisions/phases, and updated statistics and momentum derived from the current event/frame history.
 
 When the agent serves the stream, ticks come from PostgreSQL. CSV fallback replays `apps/web/data` at `MOCK_MATCH_TICK_MS` (default 1000 ms).
 

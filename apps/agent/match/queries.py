@@ -32,6 +32,49 @@ def load_events_through(conn: Connection, through_second: int) -> list[dict]:
     ).fetchall()
 
 
+def load_frame_metrics_through(conn: Connection, through_ms: int) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT match_ms, match_second, period, possession_team, ball_x
+        FROM frames
+        WHERE match_ms::numeric <= %s
+        ORDER BY match_ms
+        """,
+        (through_ms,),
+    ).fetchall()
+
+
+def load_frame_picker_index_through(conn: Connection, through_ms: int) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT frame_id, match_ms, match_second
+        FROM frames
+        WHERE match_ms::numeric <= %s
+        ORDER BY match_ms
+        """,
+        (through_ms,),
+    ).fetchall()
+
+
+def load_frame_by_id(conn: Connection, frame_id: str) -> dict | None:
+    return conn.execute(
+        "SELECT * FROM frames WHERE frame_id = %s",
+        (frame_id,),
+    ).fetchone()
+
+
+def load_ratings_at_second(conn: Connection, cursor_second: int) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT match_second, period, period_ms, clock_label, frame_id, ratings
+        FROM player_ratings
+        WHERE match_second::numeric >= %s AND match_second::numeric < %s + 1
+        ORDER BY match_second::numeric
+        """,
+        (cursor_second, cursor_second),
+    ).fetchall()
+
+
 def load_frames_through(conn: Connection, through_second: int) -> list[dict]:
     return conn.execute(
         """

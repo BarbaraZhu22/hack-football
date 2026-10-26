@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
@@ -29,8 +29,6 @@ const TIMELINE_TABS = [
   { id: "events", label: "Events" },
 ];
 
-const INITIAL_CLOCK = { seconds: 78 * 60 + 32, minute: 78, second: 32, label: "78:32", finished: false };
-
 function mergeById(current, incoming = []) {
   if (!incoming.length) return current;
   const seen = new Set(current.map((item) => item.id));
@@ -45,6 +43,15 @@ function LiveClock({ clock, connection }) {
       : connection === "offline"
         ? "Offline"
         : "Connecting";
+  if (!clock?.label) {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1">
+        <span className="desk-type-meta font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </span>
+      </span>
+    );
+  }
   return (
     <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1">
       <span className={cn("size-1.5 rounded-full bg-primary", connection === "live" ? "animate-pulse" : "")} />
@@ -493,12 +500,11 @@ function TabSwitch({ value, onChange, options }) {
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
   const [snapshot, setSnapshot] = useState(null);
-  const [clock, setClock] = useState(INITIAL_CLOCK);
+  const [clock, setClock] = useState(null);
   const [connection, setConnection] = useState("connecting");
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
-  const framesRef = useRef([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -506,15 +512,14 @@ export default function OverviewTab() {
 
     async function connect() {
       try {
-        const response = await fetch("/api/match?through=78:32", { cache: "no-store" });
+        const response = await fetch("/api/match", { cache: "no-store" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Match API request failed.");
         if (cancelled) return;
 
         setSnapshot(data);
         setClock(data.clock);
-        framesRef.current = data.frames || [];
-        setCurrentFrame(framesRef.current.at(-1) || null);
+        setCurrentFrame(data.frame ?? null);
         setConnection(data.clock.finished ? "finished" : "connecting");
         if (data.clock.finished) return;
 
@@ -530,7 +535,6 @@ export default function OverviewTab() {
           const tick = JSON.parse(message.data);
           setLiveEvents(tick.events || []);
           if (tick.frame) {
-            framesRef.current.push(tick.frame);
             setCurrentFrame(tick.frame);
           }
           setClock(tick.clock);
@@ -585,7 +589,7 @@ export default function OverviewTab() {
   const lineupPlayers = buildLineup(matchData.people || [], currentFrame);
   const lineupIds = new Set(lineupPlayers.map((player) => player.personId).filter(Boolean));
   const latestRatings = new Map();
-  const lineupSecond = currentFrame?.timeSeconds ?? Number.MAX_SAFE_INTEGER;
+  const lineupSecond = clock?.seconds ?? Number.MAX_SAFE_INTEGER;
   const ratingRows = matchData.ratings || [];
   for (let index = ratingRows.length - 1; index >= 0 && latestRatings.size < lineupIds.size; index -= 1) {
     const rating = ratingRows[index];
