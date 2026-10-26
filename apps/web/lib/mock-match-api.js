@@ -311,6 +311,28 @@ function createFrame(row) {
   };
 }
 
+function flattenRatingRows(rows) {
+  if (!rows.length) return [];
+  if (rows[0].ratings !== undefined && rows[0].player_id === undefined) {
+    const flat = [];
+    for (const row of rows) {
+      const entries = jsonOr(row.ratings, []);
+      for (const entry of entries) {
+        flat.push({
+          ...entry,
+          match_second: row.match_second,
+          period: row.period,
+          period_ms: row.period_ms,
+          clock_label: row.clock_label,
+          frame_id: row.frame_id,
+        });
+      }
+    }
+    return flat;
+  }
+  return rows;
+}
+
 function createPlayerRating(row) {
   const matchSecond = Number(row.match_second);
   return {
@@ -498,7 +520,7 @@ export async function loadMockMatchDataset() {
   const peopleById = new Map(people.filter((person) => person.personId).map((person) => [person.personId, person]));
   const events = eventRows.map((row) => createEvent(row, peopleById));
   const frames = frameRows.map(createFrame);
-  const ratings = ratingRows.map(createPlayerRating);
+  const ratings = flattenRatingRows(ratingRows).map(createPlayerRating);
   return {
     match: MATCH,
     events: events.filter((event) => event.type !== "phase"),

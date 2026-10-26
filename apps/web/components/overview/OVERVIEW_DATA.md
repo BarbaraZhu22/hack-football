@@ -2,7 +2,7 @@
 
 The Overview reads its mock response from `events.csv` and `frames.csv` through the local match API. Event rows carry stable IDs, actor references, chain links, decisions, score state, shot/pass/duel/foul/card/set-piece metrics, incident IDs, and factual commentary. Tracking rows link back to every event at the same time and include the complete player/official positions and on-pitch status.
 
-`player-ratings.csv` is the new live player-rating table. It records the carried-forward player rating for every elapsed second from each player's first appearance, with rating deltas tied to event IDs. The initial 78:32 snapshot returns the full rating history through that clock; one SSE tick per second sends the next ratings together with that second's frame and events.
+`player-ratings.csv` stores one row per `match_second` with a `ratings` JSON array (all active players that second). The API expands it to the same flat rating objects as before. The initial 78:32 snapshot returns history through that clock; each SSE tick adds that second's frame, events, and ratings.
 
 ## Timelines and commentary
 

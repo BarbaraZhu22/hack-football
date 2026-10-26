@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildPlayerRatings } from "./match-tables.mjs";
+import { buildPlayerRatingsBySecond } from "./match-tables.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, "..", "data");
@@ -52,6 +52,6 @@ function toCsv(headers, rows) {
 const events = parseCsv(readFileSync(join(DATA_DIR, "events.csv"), "utf8"));
 const frames = parseCsv(readFileSync(join(DATA_DIR, "frames.csv"), "utf8"));
 const people = parseCsv(readFileSync(join(DATA_DIR, "people.csv"), "utf8"));
-const { rows, headers } = buildPlayerRatings(events, frames, people);
+const { rows, headers } = buildPlayerRatingsBySecond(events, frames, people);
 writeFileSync(join(DATA_DIR, "player-ratings.csv"), toCsv(headers, rows));
-console.log(`Wrote ${rows.length} player rating rows to ${DATA_DIR}/player-ratings.csv`);
+console.log(`Wrote ${rows.length} player-ratings-by-second rows to ${DATA_DIR}/player-ratings.csv`);

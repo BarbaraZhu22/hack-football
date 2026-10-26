@@ -3,3 +3,4 @@ uvicorn==0.34.0
 agent-framework-foundry
 azure-identity
 python-dotenv
+psycopg[binary]>=3.2.10

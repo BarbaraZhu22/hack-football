@@ -715,6 +715,15 @@ export default function OverviewTab() {
           <span className="text-muted-foreground">{match.stadium}</span>
           <span className="text-muted-foreground">Att {match.attendance}</span>
           <span className="text-muted-foreground">Incident {match.incidentId}</span>
+          <span className="text-muted-foreground">
+            {apiError
+              ? "Match data unavailable"
+              : snapshot?.dataSource?.ok
+                ? "Match data · PostgreSQL connected"
+                : snapshot
+                  ? "Match data connected"
+                  : "Loading match data…"}
+          </span>
           <LiveClock clock={clock} connection={connection} />
         </CardContent>
       </Card>

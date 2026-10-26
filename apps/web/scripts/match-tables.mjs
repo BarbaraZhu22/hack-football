@@ -1395,6 +1395,51 @@ export function buildPlayerRatings(events, frames, people) {
   return { rows: output, headers: PLAYER_RATING_HEADERS };
 }
 
+export const PLAYER_RATING_BY_SECOND_HEADERS = [
+  "match_second", "period", "period_ms", "clock_label", "frame_id", "ratings",
+];
+
+export function buildPlayerRatingsBySecond(events, frames, people) {
+  const { rows } = buildPlayerRatings(events, frames, people);
+  const bySecond = new Map();
+  for (const row of rows) {
+    const sec = String(row.match_second);
+    if (!bySecond.has(sec)) {
+      bySecond.set(sec, {
+        match_second: sec,
+        period: row.period,
+        period_ms: row.period_ms,
+        clock_label: row.clock_label,
+        frame_id: row.frame_id,
+        entries: [],
+      });
+    }
+    bySecond.get(sec).entries.push({
+      rating_id: row.rating_id,
+      player_id: row.player_id,
+      team_code: row.team_code,
+      player_name: row.player_name,
+      player_status: row.player_status,
+      rating: row.rating,
+      rating_delta: row.rating_delta,
+      event_ids: row.event_ids,
+      change_reason: row.change_reason,
+      source: row.source,
+    });
+  }
+  const output = [...bySecond.values()]
+    .sort((left, right) => Number(left.match_second) - Number(right.match_second))
+    .map((group) => ({
+      match_second: group.match_second,
+      period: group.period,
+      period_ms: group.period_ms,
+      clock_label: group.clock_label,
+      frame_id: group.frame_id,
+      ratings: JSON.stringify(group.entries),
+    }));
+  return { rows: output, headers: PLAYER_RATING_BY_SECOND_HEADERS };
+}
+
 function buildFrames(events, { people, home, away, half1Seconds, half2Seconds, movementProfiles }) {
   const duration = half1Seconds + half2Seconds;
   const eventsAtSecond = new Map();
@@ -1964,7 +2009,7 @@ export function buildMatchTables({ people, home, away, half1Seconds, half2Second
   const frames = buildFrames(events, { people, home, away, half1Seconds, half2Seconds, movementProfiles });
   assertDataset(events, frames, people, half1Seconds, half2Seconds, home, away);
   const movementSummaries = summarizePlayerMovement(frames);
-  const playerRatings = buildPlayerRatings(events, frames, people);
+  const playerRatings = buildPlayerRatingsBySecond(events, frames, people);
   const movementTargets = people.filter((person) => !person.role).map((person) => {
     const id = playerId(person.team, person.no);
     const activeSeconds = playedSeconds(person, { home, half1Seconds, half2Seconds });
