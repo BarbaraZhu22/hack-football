@@ -254,8 +254,9 @@ def create_event(row: dict, people_by_id: dict[str, dict]) -> dict:
 
 
 def create_frame(row: dict) -> dict:
-    match_ms = int(row["match_ms"])
-    time_seconds = int(row["match_second"])
+    match_ms = int(float(row["match_ms"]))
+    time_seconds = float(row["match_second"])
+    period_ms = int(float(row["period_ms"]))
     actors_raw = json_or(row.get("actors"), [])
     actors = []
     for actor in actors_raw:
@@ -271,8 +272,8 @@ def create_frame(row: dict) -> dict:
     return {
         "id": row["frame_id"],
         "frameId": row["frame_id"],
-        "period": int(row["period"]),
-        "periodMilliseconds": int(row["period_ms"]),
+        "period": int(float(row["period"])),
+        "periodMilliseconds": period_ms,
         "timeMilliseconds": match_ms,
         "timeSeconds": time_seconds,
         "clockSeconds": time_seconds,
@@ -319,15 +320,16 @@ def flatten_rating_rows(rows: list[dict]) -> list[dict]:
 
 
 def create_player_rating(row: dict) -> dict:
-    match_second = int(row["match_second"])
+    match_second = float(row["match_second"])
+    time_ms = int(round(match_second * 1000))
     return {
         "id": row["rating_id"],
         "frameId": row["frame_id"],
-        "timeMilliseconds": match_second * 1000,
+        "timeMilliseconds": time_ms,
         "timeSeconds": match_second,
         "matchSecond": match_second,
-        "period": int(row["period"]),
-        "periodMilliseconds": int(row["period_ms"]),
+        "period": int(float(row["period"])),
+        "periodMilliseconds": int(float(row["period_ms"])),
         "clockLabel": row["clock_label"],
         "playerId": row["player_id"],
         "teamCode": row["team_code"],
@@ -523,7 +525,7 @@ def derive_stats(events: list[dict], frames: list[dict]) -> list[dict]:
 
 
 def create_mock_momentum(frames: list[dict]) -> list[float]:
-    last_second = frames[-1]["timeSeconds"] if frames else 0
+    last_second = int(frames[-1]["timeSeconds"]) if frames else 0
     buckets = max(1, (last_second + 1 + 119) // 120)
     sums = [{"possession": 0, "territorial": 0, "count": 0} for _ in range(buckets)]
     home_code = MATCH["home"]["code"]
@@ -531,7 +533,7 @@ def create_mock_momentum(frames: list[dict]) -> list[float]:
         team_code = frame.get("possession", {}).get("teamCode")
         if not team_code:
             continue
-        bucket = frame["timeSeconds"] // 120
+        bucket = int(frame["timeSeconds"]) // 120
         if bucket >= len(sums):
             continue
         s = sums[bucket]

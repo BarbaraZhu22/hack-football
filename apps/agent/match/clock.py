@@ -26,14 +26,30 @@ def format_clock(total_seconds: int) -> dict:
     }
 
 
-def parse_clock(value: str = DEFAULT_LIVE_CLOCK) -> int:
-    added = re.match(r"^(\d+)\+(\d+):([0-5]\d)$", value)
+def _fraction_from_group(value: str | None) -> float:
+    if not value:
+        return 0.0
+    return int(value.ljust(3, "0")) / 1000.0
+
+
+def parse_clock_to_seconds(value: str = DEFAULT_LIVE_CLOCK) -> float:
+    added = re.match(r"^(\d+)\+(\d+):([0-5]\d)(?:\.(\d{1,3}))?$", value)
     if added:
         base = int(added.group(1))
         extra = int(added.group(2))
         second = int(added.group(3))
-        return (base + extra + (1 if base >= 90 else 0)) * 60 + second
-    plain = re.match(r"^(\d+):([0-5]\d)$", value)
+        fraction = _fraction_from_group(added.group(4))
+        return (base + extra + (1 if base >= 90 else 0)) * 60 + second + fraction
+    plain = re.match(r"^(\d+):([0-5]\d)(?:\.(\d{1,3}))?$", value)
     if not plain:
         raise ValueError("Clock must use MM:SS or period-added-time format.")
-    return int(plain.group(1)) * 60 + int(plain.group(2))
+    fraction = _fraction_from_group(plain.group(3))
+    return int(plain.group(1)) * 60 + int(plain.group(2)) + fraction
+
+
+def parse_clock_to_milliseconds(value: str) -> int:
+    return int(round(parse_clock_to_seconds(value) * 1000))
+
+
+def parse_clock(value: str = DEFAULT_LIVE_CLOCK) -> int:
+    return int(parse_clock_to_seconds(value))

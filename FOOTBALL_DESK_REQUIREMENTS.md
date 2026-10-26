@@ -155,7 +155,7 @@ Implementation: CSS variables in `globals.css`; the fixed theme id lives in `lib
 
 Browser → Next.js `POST /api/chat` → FastAPI (`AGENT_URL`, server-side only) → Microsoft agent adapter.
 
-The Match overview loads its initial data from local CSV files through `GET /api/match` and replays subsequent updates through `GET /api/match/stream` (Server-Sent Events). The separate PostgreSQL-backed match endpoints in the Python service are not currently wired to the Overview routes.
+The Match overview loads its initial data through `GET /api/match` and live updates through `GET /api/match/stream` (Server-Sent Events). Next.js proxies these to FastAPI (`AGENT_URL`), which reads PostgreSQL. If the agent is unreachable or returns a server error, the same routes fall back to the CSV tables under `apps/web/data`. Incident adjudication also uses `GET /api/match/precedents` and pitch replay uses `GET /api/match/tracking` with the same remote-first, CSV-backup behavior.
 
 ### 5.2 Contract
 
@@ -247,8 +247,9 @@ When adding a new atom, place it under `components/ui/` and compose it from tab 
 
 | Variable | Where | Purpose |
 |----------|--------|---------|
-| `AGENT_URL` | Next.js server | Base URL for FastAPI chat (default `http://127.0.0.1:8088`) |
-| `MOCK_MATCH_TICK_MS` | Next.js server | Local mock replay interval in milliseconds (default `1000`) |
+| `AGENT_URL` | Next.js server | Base URL for FastAPI chat and match APIs (default `http://127.0.0.1:8088`) |
+| `MOCK_MATCH_TICK_MS` | Next.js server | CSV fallback SSE replay interval in milliseconds (default `1000`) |
+| `DATABASE_URL` | `apps/agent` | PostgreSQL connection for match snapshot, stream, precedents, and tracking |
 | `FOUNDRY_PROJECT_ENDPOINT` | `apps/agent` (local `.env` or Container App env) | Foundry **Project endpoint** from the portal (`.../api/projects/...`) |
 | `FOUNDRY_API_KEY` | `apps/agent` (optional but recommended on Container Apps) | Project **API key** from the same portal page; when set, no browser/`az login` |
 | `FOUNDRY_MODEL` | `apps/agent` | Deployment name (e.g. `DeepSeek-V4.1-Flash`) |

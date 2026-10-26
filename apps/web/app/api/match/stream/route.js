@@ -8,6 +8,7 @@ import {
   parseClock,
   scoreAt,
 } from "@/lib/mock-match-api";
+import { fetchAgentMatch, shouldFallbackToLocal } from "@/lib/agent-match-proxy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -113,39 +114,63 @@ async function* localMatchStream(afterSeconds, delayMs, signal) {
   }
 }
 
-export async function GET(request) {
-  try {
-    const afterSeconds = parseAfter(request.nextUrl.searchParams.get("after"));
-    const iterator = localMatchStream(afterSeconds, tickDelayMs(), request.signal);
-    const body = new ReadableStream({
-      async pull(controller) {
-        try {
-          const next = await iterator.next();
-          if (next.done) {
-            controller.close();
-            return;
-          }
-          controller.enqueue(encoder.encode(next.value));
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : "Local match stream failed.";
-          controller.enqueue(
-            encoder.encode("event: error\ndata: " + JSON.stringify({ detail }) + "\n\n"),
-          );
+function localStreamResponse(request) {
+  const afterSeconds = parseAfter(request.nextUrl.searchParams.get("after"));
+  const iterator = localMatchStream(afterSeconds, tickDelayMs(), request.signal);
+  const body = new ReadableStream({
+    async pull(controller) {
+      try {
+        const next = await iterator.next();
+        if (next.done) {
           controller.close();
+          return;
         }
-      },
-      async cancel() {
-        await iterator.return?.();
-      },
+        controller.enqueue(encoder.encode(next.value));
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Local match stream failed.";
+        controller.enqueue(
+          encoder.encode("event: error\ndata: " + JSON.stringify({ detail }) + "\n\n"),
+        );
+        controller.close();
+      }
+    },
+    async cancel() {
+      await iterator.return?.();
+    },
+  });
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+export async function GET(request) {
+  const query = request.nextUrl.search;
+  try {
+    const response = await fetchAgentMatch(`/api/match/stream${query}`, {
+      headers: { Accept: "text/event-stream" },
     });
-    return new Response(body, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
-    });
+    if (!shouldFallbackToLocal(response)) {
+      return new Response(response.body, {
+        status: response.status,
+        headers: {
+          "Content-Type": response.headers.get("content-type") || "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+  } catch {
+    // fall through to local replay
+  }
+
+  try {
+    return localStreamResponse(request);
   } catch (error) {
     const invalidClock = error instanceof Error && error.message.includes("Clock must");
     const detail = error instanceof Error ? error.message : "Local match stream unavailable.";
