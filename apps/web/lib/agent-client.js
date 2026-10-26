@@ -13,12 +13,10 @@ export async function sendChatMessage({ messages, context }) {
   return response.json();
 }
 
-export async function fetchMatchStatus() {
-  const response = await fetch("/api/match?half=1&t_ms=0&limit=1", {
-    cache: "no-store",
-  });
+export async function fetchAgentHealth() {
+  const response = await fetch("/api/health", { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`Match status failed (${response.status})`);
+    throw new Error(`Agent health failed (${response.status})`);
   }
   return response.json();
 }

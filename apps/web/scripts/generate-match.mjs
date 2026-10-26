@@ -329,7 +329,7 @@ function main() {
       role: "",
     })),
     ...COACHES.map((c) => ({
-      person_id: "",
+      person_id: `${c.team}-coach`,
       team: c.team,
       no: "",
       name: c.name,

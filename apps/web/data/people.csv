@@ -37,5 +37,5 @@ ARS-29,ARS,29,Havertz,ST,bench,
 ARS-19,ARS,19,Trossard,W,bench,
 ARS-24,ARS,24,Nelson,W,bench,
 ARS-25,ARS,25,Elneny,MF,bench,
-,MCI,,Pep Guardiola,,,head_coach
-,ARS,,Mikel Arteta,,,head_coach
+MCI-coach,MCI,,Pep Guardiola,,,head_coach
+ARS-coach,ARS,,Mikel Arteta,,,head_coach

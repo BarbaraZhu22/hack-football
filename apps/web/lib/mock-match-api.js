@@ -358,7 +358,9 @@ function createPlayerRating(row) {
 
 function normalizePeople(rows) {
   return rows.map((row) => ({
-    personId: row.person_id || (row.team && row.no ? `${row.team}-${row.no}` : null),
+    personId:
+      row.person_id ||
+      (row.team && row.no ? `${row.team}-${row.no}` : row.role === "head_coach" ? `${row.team}-coach` : null),
     team: teamSide(row.team),
     teamCode: row.team,
     number: numberOrNull(row.no),

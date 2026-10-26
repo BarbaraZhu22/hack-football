@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowUpRight, Check, CircleHelp, Download, Scale, X } fr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchMatchStatus } from "@/lib/agent-client";
+import { fetchAgentHealth } from "@/lib/agent-client";
 import {
   ACTUAL_DECISION,
   COMPARISONS,
@@ -311,15 +311,13 @@ export default function MatchTab() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchMatchStatus()
+    fetchAgentHealth()
       .then((body) => {
         if (cancelled) return;
-        console.log("[match] /api/match", body);
         setMatch(body);
       })
       .catch((error) => {
         if (cancelled) return;
-        console.warn("[match] /api/match failed", error);
         setServiceError(error instanceof Error ? error.message : "Service status unavailable");
       });
     return () => { cancelled = true; };
@@ -381,12 +379,18 @@ export default function MatchTab() {
           <p className="mt-1 text-sm text-muted-foreground">{MATCH.stadium} · {MATCH.attendance} · Incident {MATCH.incidentId}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={serviceError ? "outline" : "secondary"}>{serviceError ? "Agent offline" : match?.status ?? "Checking service"}</Badge>
+          <Badge variant={serviceError ? "outline" : "secondary"}>
+            {serviceError ? "Agent offline" : match?.status === "ok" ? "Agent online" : "Checking service"}
+          </Badge>
           <Button size="sm" variant="outline" onClick={() => exportReport("md")}><Download className="mr-1 size-4" /> Markdown</Button>
           <Button size="sm" onClick={() => exportReport("json")}><Download className="mr-1 size-4" /> JSON</Button>
         </div>
       </div>
-      {serviceError ? <p className="text-xs text-muted-foreground">Match service status unavailable: {serviceError}</p> : match ? <p className="text-xs text-muted-foreground">{match.service}: {match.message}</p> : null}
+      {serviceError ? (
+        <p className="text-xs text-muted-foreground">Match service status unavailable: {serviceError}</p>
+      ) : match?.status === "ok" ? (
+        <p className="text-xs text-muted-foreground">Agent service is running.</p>
+      ) : null}
 
       <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1" role="tablist" aria-label="Match analysis">
         {TABS.map((item) => <Button key={item.id} role="tab" aria-selected={tab === item.id} size="sm" variant={tab === item.id ? "secondary" : "ghost"} onClick={() => setTab(item.id)}>{item.label}</Button>)}
