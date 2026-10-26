@@ -128,6 +128,26 @@ def load_all_frames(conn: Connection) -> list[dict]:
     return conn.execute("SELECT * FROM frames ORDER BY match_ms").fetchall()
 
 
+def load_all_frame_metrics(conn: Connection) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT match_ms, match_second, period, possession_team, ball_x
+        FROM frames
+        ORDER BY match_ms
+        """
+    ).fetchall()
+
+
+def load_all_frame_picker_index(conn: Connection) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT frame_id, match_ms, match_second
+        FROM frames
+        ORDER BY match_ms
+        """
+    ).fetchall()
+
+
 def load_all_ratings(conn: Connection) -> list[dict]:
     return conn.execute(
         "SELECT match_second, period, period_ms, clock_label, frame_id, ratings FROM player_ratings ORDER BY match_second::numeric"

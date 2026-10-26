@@ -8,7 +8,7 @@ from match.frame_picker import frame_for_elapsed_second, picker_index_from_row
 from match.normalize import (
     create_event,
     create_frame,
-    create_mock_momentum,
+    derive_momentum,
     create_player_rating,
     dedupe_frames_for_metrics,
     decision_from_event,
@@ -58,7 +58,10 @@ def create_snapshot(conn: Connection, through_seconds: int) -> dict:
         for event in events
         if event.get("timelineEvent") and event["type"] in MAJOR_EVENT_TYPES
     ]
-    decisions = [decision_from_event(event) for event in events if event.get("decision")]
+    decisions = sorted(
+        [decision_from_event(event) for event in events if event.get("decision")],
+        key=lambda item: (item.get("timeMilliseconds") or 0, item.get("sequence") or 0),
+    )
     score = score_at(all_events)
 
     return {
@@ -69,7 +72,7 @@ def create_snapshot(conn: Connection, through_seconds: int) -> dict:
         "events": events,
         "timelineEvents": timeline_events,
         "decisions": decisions,
-        "momentum": create_mock_momentum(metric_frames),
+        "momentum": derive_momentum(events, metric_frames),
         "phases": phases,
         "frame": display_frame,
         "ratings": ratings,

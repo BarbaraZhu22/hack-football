@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
@@ -33,6 +33,19 @@ function mergeById(current, incoming = []) {
   if (!incoming.length) return current;
   const seen = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => !seen.has(item.id))];
+}
+
+function withinClock(items, clock) {
+  const atMs = Math.max(0, Number(clock?.seconds) || 0) * 1000;
+  return items.filter((item) => (item.timeMilliseconds ?? 0) <= atMs);
+}
+
+function sortDecisions(items) {
+  return [...items].sort(
+    (left, right) =>
+      (left.timeMilliseconds ?? 0) - (right.timeMilliseconds ?? 0)
+      || (left.sequence ?? 0) - (right.sequence ?? 0),
+  );
 }
 
 function LiveClock({ clock, connection }) {
@@ -504,11 +517,12 @@ export default function OverviewTab() {
   const [connection, setConnection] = useState("connecting");
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
-  const [liveEvents, setLiveEvents] = useState([]);
+  const receivedTickRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     let stream;
+    receivedTickRef.current = false;
 
     async function connect() {
       try {
@@ -524,16 +538,16 @@ export default function OverviewTab() {
         if (data.clock.finished) return;
 
         stream = new EventSource("/api/match/stream?after=" + encodeURIComponent(data.cursor));
-        stream.onopen = () => {
-          if (!cancelled) setConnection("live");
-        };
         stream.onerror = () => {
-          if (!cancelled) setConnection("reconnecting");
+          if (!cancelled) {
+            setConnection(receivedTickRef.current ? "reconnecting" : "connecting");
+          }
         };
         stream.addEventListener("tick", (message) => {
           if (cancelled) return;
           const tick = JSON.parse(message.data);
-          setLiveEvents(tick.events || []);
+          receivedTickRef.current = true;
+          setConnection("live");
           if (tick.frame) {
             setCurrentFrame(tick.frame);
           }
@@ -572,9 +586,10 @@ export default function OverviewTab() {
 
   const matchData = snapshot || {};
   const match = matchData.match || MATCH;
-  const events = matchData.events || [];
-  const timelineEvents = matchData.timelineEvents || [];
-  const decisions = matchData.decisions || [];
+  const events = withinClock(matchData.events || [], clock);
+  const timelineEvents = withinClock(matchData.timelineEvents || [], clock);
+  const decisions = sortDecisions(withinClock(matchData.decisions || [], clock));
+  const phases = withinClock(matchData.phases || [], clock);
   const controversialDecisionIds = new Set();
   const reviewedIncidentIds = new Set();
   for (const decision of decisions) {
@@ -583,7 +598,6 @@ export default function OverviewTab() {
     reviewedIncidentIds.add(incident.id);
     controversialDecisionIds.add(decision.id);
   }
-  const phases = matchData.phases || [];
   const statRows = matchData.stats || [];
   const momentum = matchData.momentum || [];
   const lineupPlayers = buildLineup(matchData.people || [], currentFrame);
@@ -649,7 +663,7 @@ export default function OverviewTab() {
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col py-2">
             {timeline === "decisions" ? (
-              <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
+              <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
                 {decisions.map((decision) => (
                   <DecisionRow
@@ -686,7 +700,13 @@ export default function OverviewTab() {
         </Card>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <LiveTrackingFrame frame={currentFrame} match={match} people={matchData.people || []} liveEvents={liveEvents} />
+          <LiveTrackingFrame
+            frame={currentFrame}
+            match={match}
+            people={matchData.people || []}
+            pitchEvents={events}
+            clockSeconds={clock?.seconds ?? null}
+          />
           <div className="flex min-h-0 flex-1 flex-col">
             <AgentPanel events={events} phases={phases} match={match} />
           </div>

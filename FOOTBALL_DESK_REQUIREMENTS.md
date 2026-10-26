@@ -248,7 +248,7 @@ When adding a new atom, place it under `components/ui/` and compose it from tab 
 | Variable | Where | Purpose |
 |----------|--------|---------|
 | `AGENT_URL` | Next.js server | Base URL for FastAPI chat and match APIs (default `http://127.0.0.1:8088`) |
-| `MOCK_MATCH_TICK_MS` | Next.js server | CSV fallback SSE replay interval in milliseconds (default `1000`) |
+| `MATCH_TICK_MS` | `apps/agent` | SSE tick interval in milliseconds for live replay (default `1000`) |
 | `DATABASE_URL` | `apps/agent` | PostgreSQL connection for match snapshot, stream, precedents, and tracking |
 | `FOUNDRY_PROJECT_ENDPOINT` | `apps/agent` (local `.env` or Container App env) | Foundry **Project endpoint** from the portal (`.../api/projects/...`) |
 | `FOUNDRY_API_KEY` | `apps/agent` (optional but recommended on Container Apps) | Project **API key** from the same portal page; when set, no browser/`az login` |
