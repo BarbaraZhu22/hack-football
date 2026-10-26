@@ -8,7 +8,7 @@ export const KITS = {
         socks: '#78c7ea',
         boots: '#111518',
         trim: '#f4fbff',
-        number: '6',
+        number: '24',
         name: 'MCI',
     },
     away: {
@@ -18,7 +18,7 @@ export const KITS = {
         socks: '#d01722',
         boots: '#151515',
         trim: '#ffffff',
-        number: '8',
+        number: '7',
         name: 'ARS',
     },
 };

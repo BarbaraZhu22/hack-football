@@ -1,46 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Scan } from "lucide-react";
-import styles from "@/components/pitch/ViewportChrome.module.css";
 import { Scene } from "@/components/three/Scene";
+import styles from "@/components/pitch/ViewportChrome.module.css";
 import ViewportChrome from "@/components/pitch/ViewportChrome";
 import { useScene } from "@/lib/scene/SceneProvider";
 
-export default function PitchCanvas({ sim, timeRef, time, onFreeze, viewportParts }) {
+export default function PitchCanvas({ sim, timeRef, time, viewportParts, onReady }) {
   const { state, run } = useScene();
-  const previousLoaderSetting = useRef(viewportParts.loading);
-  const [loaded, setLoaded] = useState(false);
-  const [loaderHidden, setLoaderHidden] = useState(false);
-  const [loaderFading, setLoaderFading] = useState(false);
-  const [progress, setProgress] = useState(6);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setProgress((value) => value < 88 ? Math.min(88, value + Math.random() * 9) : value);
-    }, 260);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!loaded) return undefined;
-    setProgress(100);
-    setLoaderFading(true);
-    const timer = window.setTimeout(() => setLoaderHidden(true), 450);
-    return () => window.clearTimeout(timer);
-  }, [loaded]);
-
-  useEffect(() => {
-    if (viewportParts.loading && !previousLoaderSetting.current) {
-      setLoaderHidden(false);
-      setLoaderFading(false);
-    } else if (!viewportParts.loading) {
-      setLoaderHidden(true);
-    }
-    previousLoaderSetting.current = viewportParts.loading;
-  }, [loaded, viewportParts.loading]);
-
-  const onReady = () => setLoaded(true);
 
   return (
     <div className={styles.stageFrame}>
@@ -73,29 +39,8 @@ export default function PitchCanvas({ sim, timeRef, time, onFreeze, viewportPart
         }}
         overlays={state.overlays}
         onOverlay={(key) => run([{ type: "pitch.overlay.set", key, enabled: !state.overlays[key] }])}
-        onFreeze={onFreeze}
         parts={viewportParts}
       />
-      {viewportParts.loading && !loaderHidden && (
-        <div className={`${styles.stageLoader} ${loaderFading ? styles.stageLoaderDone : ""}`}>
-          <div className={styles.loadInner}>
-            <div className={styles.loadEmblem}>
-              <div className={`${styles.ring} ${styles.ringOne}`} />
-              <div className={`${styles.ring} ${styles.ringTwo}`} />
-              <div className={`${styles.ring} ${styles.ringThree}`} />
-              <Scan size={24} />
-            </div>
-            <span className={styles.eyebrow}>ARBITER RECONSTRUCTION ENGINE</span>
-            <h2>Building the incident twin</h2>
-            <p>{sim.kind === "offside" ? "Loading rig · calibrating pitch · timing pass" : "Loading rig · calibrating pitch · solving contact"}</p>
-            <div className={styles.loadBar}><span style={{ width: `${progress}%` }} /></div>
-            <div className={styles.loadRow}>
-              <span>{progress < 100 ? "ASSEMBLING SCENE" : "READY"}</span>
-              <b>{Math.min(100, Math.round(progress))}%</b>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

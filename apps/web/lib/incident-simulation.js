@@ -68,6 +68,7 @@ const CONTACT_T = distanceToTime(trackLength);
 const COMMIT_T = CONTACT_T - 0.64;
 const FEET_LEAVE_T = CONTACT_T - 0.34;
 const BALL_RELEASE_T = CONTACT_T + 0.04;
+const WHISTLE_T = CONTACT_T + 1;
 const SLIDE_DIR = norm({ x: 0.55, y: 0, z: 0.83 });
 export function buildSimulation() {
     const steps = Math.round(duration / dt) + 1;
@@ -362,6 +363,19 @@ export function buildSimulation() {
             bTrail: bTrail.slice(),
         });
     }
+    const whistleIndex = Math.round(WHISTLE_T / dt);
+    const whistleBall = frames[whistleIndex]?.ball;
+    if (whistleBall) {
+        for (let index = whistleIndex + 1; index < frames.length; index += 1) {
+            frames[index].ball = {
+                ...frames[index].ball,
+                p: { ...whistleBall.p },
+                v: { x: 0, y: 0, z: 0 },
+                spin: { x: 0, y: 0, z: 0 },
+                rolling: false,
+            };
+        }
+    }
     const events = [
         { id: 'chase', label: 'Recovery sprint', short: 'SPRINT', t: 0.22, lane: 'tackler', tone: 'accent', detail: 'Tackler closes from side-rear at 29.5 km/h.' },
         { id: 'commit', label: 'Challenge committed', short: 'COMMIT', t: 1.08, lane: 'tackler', tone: 'accent', detail: 'Tackler leaves his feet; leading leg begins to extend.' },
@@ -369,7 +383,7 @@ export function buildSimulation() {
         { id: 'ball', label: 'Ball released', short: 'BALL', t: BALL_RELEASE_T, lane: 'ball', tone: 'ball', detail: 'Ball leaves the boot at 12.1 m/s after the player contact.' },
         { id: 'fall', label: 'Carrier grounded', short: 'GROUND', t: CONTACT_T + 0.84, lane: 'carrier', tone: 'danger', detail: 'Carrier lands on his chest; both players grounded.' },
         { id: 'stop', label: 'Slide arrested', short: 'STOP', t: CONTACT_T + 0.99, lane: 'tackler', tone: 'neutral', detail: 'Tackler’s momentum is arrested by turf friction after 3.1 m.' },
-        { id: 'whistle', label: 'Referee whistle', short: 'WHISTLE', t: CONTACT_T + 1.18, lane: 'official', tone: 'neutral', detail: 'On-field decision: yellow card. VAR review initiated.' },
+        { id: 'whistle', label: 'Referee whistle', short: 'WHISTLE', t: WHISTLE_T, lane: 'official', tone: 'neutral', detail: 'The referee stops play one second after contact; VAR review begins.' },
         { id: 'up', label: 'Tackler back up', short: 'RISE', t: CONTACT_T + 1.22, lane: 'tackler', tone: 'neutral', detail: 'Tackler regains his feet; carrier remains seated.' },
     ];
     return {

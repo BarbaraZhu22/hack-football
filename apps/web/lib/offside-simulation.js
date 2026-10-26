@@ -2,8 +2,8 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 const DT = 1 / 120;
-const PASS_START = 0.625;
-const BALL_RELEASE_LOCAL_TIME = 0.65;
+const PASS_START = 0.5;
+const BALL_RELEASE_LOCAL_TIME = 0.5;
 const RELEASE_TIME = PASS_START + BALL_RELEASE_LOCAL_TIME;
 const DURATION = RELEASE_TIME;
 
@@ -17,13 +17,13 @@ function makeFrame(t) {
   };
   const receiver = {
     x: 0.1 + 0.08 * Math.sin(actorTime * 1.2),
-    z: 26.4 + 4.5 * actorTime,
+    z: 26.4 + 4.7 * actorTime,
     yaw: 0,
-    speed: t < RELEASE_TIME ? 4.5 : 0,
+    speed: t < RELEASE_TIME ? 4.7 : 0,
   };
   const defender = {
     x: -1.55 + 0.08 * Math.sin(actorTime * 1.1 + 0.5),
-    z: 27.35 + 3.65 * actorTime,
+    z: 27.35 + 3.55 * actorTime,
     yaw: 0,
     speed: t < RELEASE_TIME ? 3.65 : 0,
   };
@@ -86,6 +86,12 @@ export function buildOffsideSimulation() {
     offside: {
       lineZ,
       secondLastOpponent: secondLastOpponent.role,
+      secondLastOpponentZ: secondLastOpponent.z,
+      ballZ: releaseFrame.ball.p.z,
+      receiverLeadingPointZ,
+      receiverInOpponentsHalf: receiverLeadingPointZ > 0,
+      aheadOfBall: receiverLeadingPointZ > releaseFrame.ball.p.z,
+      aheadOfSecondLastOpponent: receiverLeadingPointZ > secondLastOpponent.z,
       receiverMargin,
       receiverAhead: receiverMargin > 0,
     },
@@ -94,10 +100,10 @@ export function buildOffsideSimulation() {
         id: "run",
         label: "Attack develops",
         short: "RUN",
-        t: 0.18,
+        t: 0.15,
         lane: "attack",
         tone: "accent",
-        detail: "Two red attackers run toward the blue goal; the trailing player carries the ball.",
+        detail: "Two red attackers run toward the blue goal; the trailing player carries the ball from the recovery frame.",
       },
       {
         id: "pass",
@@ -115,7 +121,7 @@ export function buildOffsideSimulation() {
         t: RELEASE_TIME,
         lane: "ball",
         tone: "danger",
-        detail: "The players hold their release positions while the ball carries through the first part of its flight.",
+        detail: "The ball leaves the boot at the event-table pass timestamp; the receiver is fractionally beyond the second-last opponent.",
       },
     ],
     meta: {

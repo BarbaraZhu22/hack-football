@@ -89,6 +89,8 @@ When adding UI or behavior:
 3. **Do not** add large inline `style={{}}` blocks or duplicate color hex values in JSX; use semantic tokens (`bg-background`, `text-primary`, etc.).
 4. If a tab needs layout-only styling that does not belong in globals, add a **small module** next to the tab component (for example `components/pitch/pitch.module.css`) rather than bloating `globals.css`—but keep theme colors in globals.
 5. **Three.js scene colors** inside `PitchCanvas` may use literal colors for pitch grass and ball; app chrome must use theme tokens.
+6. **Use the shared visual scale:** cards use `rounded-card` with `border-border`; nested panels use `rounded-panel`; controls use `rounded-control`; badges are pills. Red-tinted surfaces use `bg-surface-red-50`, `bg-surface-red-100`, and `bg-surface-red-200` by emphasis.
+7. **Use the shared type roles:** `desk-type-page` (24/32), `desk-type-section` (16/24), `desk-type-card` (14/20), `desk-type-body` (14/20), `desk-type-support` (12/18), and `desk-type-meta` (11/16). Tiny sizes are reserved for spatial markers inside pitch visualizations.
 
 ### 2.4 Component ownership by folder
 
@@ -128,7 +130,7 @@ Rules:
 
 ## 3. Shell & navigation
 
-- **One shell component:** `DeskLayout.jsx` (logo, three tab links, skin dropdown, main content slot, agent chat).
+- **One shell component:** `DeskLayout.jsx` (logo, three tab links, fixed red-and-white skin, main content slot, agent chat).
 - **Desktop:** main content left, chat right (~360px).
 - **Mobile:** chat in a bottom collapsible panel.
 - **Tabs:** Pitch, Match, Tactics — implemented as App Router routes, not client-only fake tabs.
@@ -137,15 +139,13 @@ Rules:
 
 ## 4. Themes (skins)
 
-Three skins, switched via `html[data-theme]` and persisted in `localStorage` key `football-theme`:
+One fixed skin, applied through `html[data-theme]` and stored in `localStorage` key `football-theme` for migration of existing selections:
 
 | Id | Description |
 |----|-------------|
-| `miami` | Default — pink primary, blue accent |
-| `pitch` | Dark — black/near-black background, grass green primary |
-| `classic` | Light — white background, red primary |
+| `classic` | Red primary, white background |
 
-Implementation: CSS variables in `globals.css`; labels and ids in `lib/themes.js`. Skin switch UI lives in `DeskLayout` only.
+Implementation: CSS variables in `globals.css`; the fixed theme id lives in `lib/themes.js`. The theme switch is removed from `DeskLayout`.
 
 ---
 
@@ -155,7 +155,7 @@ Implementation: CSS variables in `globals.css`; labels and ids in `lib/themes.js
 
 Browser → Next.js `POST /api/chat` → FastAPI (`AGENT_URL`, server-side only) → Microsoft agent adapter.
 
-The Match overview loads its initial data from `GET /api/match` and live updates from `GET /api/match/stream` (Server-Sent Events). The routes use the CSV mock by default and proxy to configured match-data endpoints when `MATCH_API_URL` and `MATCH_STREAM_API_URL` are set.
+The Match overview loads its initial data through `GET /api/match` and live updates through `GET /api/match/stream` (Server-Sent Events). Next.js proxies these to FastAPI (`AGENT_URL`), which reads PostgreSQL. If the agent is unreachable or returns a server error, the same routes fall back to the CSV tables under `apps/web/data`. Incident adjudication also uses `GET /api/match/precedents` and pitch replay uses `GET /api/match/tracking` with the same remote-first, CSV-backup behavior.
 
 ### 5.2 Contract
 
@@ -236,6 +236,7 @@ Supported action types (extending the list requires updating `contracts/agent.js
 
 - **shadcn-style** components in `components/ui/` (New York style, CSS variables).
 - **Chat appearance:** `conversation`, `message`, `prompt-input` in `components/ui/`.
+- Reuse `components/ui/football-icon.jsx` for football glyphs across DOM UI; do not draw page-specific ball variants.
 - **Do not** use Vercel AI SDK `useChat` for transport; use `agent-client.js` + FastAPI.
 
 When adding a new atom, place it under `components/ui/` and compose it from tab or layout components.
@@ -246,10 +247,9 @@ When adding a new atom, place it under `components/ui/` and compose it from tab 
 
 | Variable | Where | Purpose |
 |----------|--------|---------|
-| `AGENT_URL` | Next.js server | Base URL for FastAPI chat (default `http://127.0.0.1:8088`) |
-| `MATCH_API_URL` | Next.js server | Full URL for the match snapshot API; omit to use the local CSV mock |
-| `MATCH_STREAM_API_URL` | Next.js server | Full URL for the match SSE endpoint; configure with `MATCH_API_URL` for real live data |
-| `MOCK_MATCH_TICK_MS` | Next.js server | Local mock replay interval in milliseconds (default `1000`) |
+| `AGENT_URL` | Next.js server | Base URL for FastAPI chat and match APIs (default `http://127.0.0.1:8088`) |
+| `MOCK_MATCH_TICK_MS` | Next.js server | CSV fallback SSE replay interval in milliseconds (default `1000`) |
+| `DATABASE_URL` | `apps/agent` | PostgreSQL connection for match snapshot, stream, precedents, and tracking |
 | `FOUNDRY_PROJECT_ENDPOINT` | `apps/agent` (local `.env` or Container App env) | Foundry **Project endpoint** from the portal (`.../api/projects/...`) |
 | `FOUNDRY_API_KEY` | `apps/agent` (optional but recommended on Container Apps) | Project **API key** from the same portal page; when set, no browser/`az login` |
 | `FOUNDRY_MODEL` | `apps/agent` | Deployment name (e.g. `DeepSeek-V4.1-Flash`) |

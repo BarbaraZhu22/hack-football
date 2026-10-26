@@ -36,6 +36,7 @@ function OffsideLine({ sim, timeRef, lineRef }) {
 function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, showTrajectory, showForces, dual, contactView, onReady, }) {
     const { gl, scene, camera, size } = useThree();
     const controls = useRef(null);
+    const hasReportedFirstFrame = useRef(false);
     const isOffside = sim.kind === 'offside';
     const offsideLineRef = useRef(null);
     const offsideBallRef = useRef(null);
@@ -75,7 +76,6 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
         return c;
     }, []);
     useEffect(() => {
-        onReady?.();
         camera.layers.enable(3);
         contactCamera.layers.disable(3);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -278,6 +278,10 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             gl.clear(true, true, false);
             gl.render(scene, contactCamera);
             gl.setScissorTest(false);
+        }
+        if (!hasReportedFirstFrame.current && !gl.getContext().isContextLost()) {
+            hasReportedFirstFrame.current = true;
+            onReady?.();
         }
     }, 1);
     const actors = isOffside

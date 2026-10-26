@@ -8,7 +8,6 @@ import {
   Crosshair,
   Eye,
   EyeOff,
-  Focus,
   Gauge,
   Layers3,
   Move3D,
@@ -39,7 +38,6 @@ export default function ViewportChrome({
   onCamera,
   overlays,
   onOverlay,
-  onFreeze,
   parts,
 }) {
   const offside = sim.kind === "offside";
@@ -66,15 +64,6 @@ export default function ViewportChrome({
         </div>
       )}
 
-      {parts.status && (
-        <div className={styles.stageStatus}>
-          <span className={styles.statusLine}><i /> SYNTHETIC TRACK</span>
-          <span>100 FPS</span>
-          <span>±2.8 CM</span>
-          <span className={styles.engine}>WEBGL · IK RIG</span>
-        </div>
-      )}
-
       {parts.cameras && (
         <div className={styles.cameraDock}>
           <div className={styles.dockLabel}><Scan size={12} /> CAMERA</div>
@@ -86,12 +75,13 @@ export default function ViewportChrome({
                   key={camera.id}
                   className={cameraPreset === camera.id ? styles.on : ""}
                   onClick={() => onCamera(camera.id)}
-                  title={camera.label + " (" + camera.key + ")"}
+                  aria-label={`${camera.label} camera, shortcut ${camera.key}`}
                   aria-pressed={cameraPreset === camera.id}
                 >
                   <Icon size={13} />
                   <span>{camera.label}</span>
                   <kbd>{camera.key}</kbd>
+                  <span className={styles.buttonTooltip} aria-hidden="true">{camera.label} · {camera.key}</span>
                 </button>
               );
             })}
@@ -101,22 +91,22 @@ export default function ViewportChrome({
 
       {parts.overlays && (
         <div className={styles.overlayDock}>
-          <button className={overlays.skeleton ? styles.on : ""} onClick={() => onOverlay("skeleton")} aria-pressed={overlays.skeleton} title="Skeleton · S">
-            <Bone size={13} /> <span>Skeleton</span><kbd>S</kbd>
+          <button className={overlays.skeleton ? styles.on : ""} onClick={() => onOverlay("skeleton")} aria-pressed={overlays.skeleton} aria-label="Skeleton overlay, shortcut S">
+            <Bone size={13} /> <span>Skeleton</span><kbd>S</kbd><span className={styles.buttonTooltip} aria-hidden="true">Skeleton · S</span>
           </button>
-          <button className={overlays.trajectory ? styles.on : ""} onClick={() => onOverlay("trajectory")} aria-pressed={overlays.trajectory} title="Trails · T">
-            <Route size={13} /> <span>Trails</span><kbd>T</kbd>
+          <button className={overlays.trajectory ? styles.on : ""} onClick={() => onOverlay("trajectory")} aria-pressed={overlays.trajectory} aria-label="Trails overlay, shortcut T">
+            <Route size={13} /> <span>Trails</span><kbd>T</kbd><span className={styles.buttonTooltip} aria-hidden="true">Trails · T</span>
           </button>
-          <button className={overlays.forces ? styles.on : ""} onClick={() => onOverlay("forces")} aria-pressed={overlays.forces} title="Forces · K">
-            <Activity size={13} /> <span>Forces</span><kbd>K</kbd>
+          <button className={overlays.forces ? styles.on : ""} onClick={() => onOverlay("forces")} aria-pressed={overlays.forces} aria-label="Forces overlay, shortcut K">
+            <Activity size={13} /> <span>Forces</span><kbd>K</kbd><span className={styles.buttonTooltip} aria-hidden="true">Forces · K</span>
           </button>
-          <button className={overlays.labels ? styles.on : ""} onClick={() => onOverlay("labels")} aria-pressed={overlays.labels} title="Tags · L">
-            {overlays.labels ? <Eye size={13} /> : <EyeOff size={13} />} <span>Tags</span><kbd>L</kbd>
+          <button className={overlays.labels ? styles.on : ""} onClick={() => onOverlay("labels")} aria-pressed={overlays.labels} aria-label="Tags overlay, shortcut L">
+            {overlays.labels ? <Eye size={13} /> : <EyeOff size={13} />} <span>Tags</span><kbd>L</kbd><span className={styles.buttonTooltip} aria-hidden="true">Tags · L</span>
           </button>
         </div>
       )}
 
-      {parts.contact && <ContactEnvelope sim={sim} onFreeze={onFreeze} />}
+      {parts.contact && <ContactEnvelope sim={sim} />}
 
       {parts.minimap && <Minimap sim={sim} time={time} preset={cameraPreset} />}
 
@@ -144,7 +134,7 @@ export default function ViewportChrome({
   );
 }
 
-export function ContactEnvelope({ sim, onFreeze, variant = "viewport" }) {
+export function ContactEnvelope({ sim, variant = "viewport" }) {
   const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
 
   return (
@@ -158,12 +148,11 @@ export function ContactEnvelope({ sim, onFreeze, variant = "viewport" }) {
         <div><span>Severity index</span><b>0.87 <small>/1</small></b></div>
         <div><span>Ball contact</span><b className={styles.danger}>+{Math.round(sim.impact.ballDelay * 1000)} <small>ms</small></b></div>
       </div>
-      <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE CONTACT</button>
     </section>
   );
 }
 
-export function OffsideEnvelope({ sim, onFreeze, variant = "viewport" }) {
+export function OffsideEnvelope({ sim, variant = "viewport" }) {
   const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
   const margin = sim.offside.receiverMargin;
 
@@ -172,11 +161,10 @@ export function OffsideEnvelope({ sim, onFreeze, variant = "viewport" }) {
       <div className={styles.eventCardHead}><Crosshair size={13} /> OFFSIDE REVIEW</div>
       <div className={styles.eventRows}>
         <div><span>Review frame</span><b>PASS RELEASE</b></div>
-        <div><span>Second-last opponent</span><b>BLUE #6</b></div>
+        <div><span>Second-last opponent</span><b>MCI #16</b></div>
         <div><span>Receiver position</span><b className={margin > 0 ? styles.danger : ""}>{margin > 0 ? "OFFSIDE" : "ONSIDE"}</b></div>
         <div><span>Goalward margin</span><b>{margin >= 0 ? "+" : ""}{margin.toFixed(2)} <small>m</small></b></div>
       </div>
-      <button className={styles.eventFreeze} onClick={onFreeze}><Focus size={12} /> FREEZE PASS</button>
     </section>
   );
 }

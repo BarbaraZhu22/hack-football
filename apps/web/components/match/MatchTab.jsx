@@ -53,7 +53,7 @@ function buildReport() {
       description: "Late sliding challenge from side-rear. Studs-first contact above the right ankle; no clean ball contact.",
     },
     assessment: {
-      recommendation: "RED CARD — serious foul play (Law 12.2)",
+      recommendation: "RED CARD — serious foul play (Law 12.4)",
       onField: ACTUAL_DECISION.onField,
       final: ACTUAL_DECISION.final,
       confidence: ACTUAL_DECISION.confidence,
@@ -84,23 +84,23 @@ function StatusMark({ status }) {
 function DecisionView({ onCriterion, onTab, onJump }) {
   return (
     <div className="space-y-4">
-      <Card className="overflow-hidden border-primary/30">
+      <Card className="overflow-hidden border-border-active bg-surface-red-50">
         <CardContent className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_auto]">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">Panel recommendation</Badge>
-              <span className="text-xs text-muted-foreground">Law 12.2 · Serious foul play</span>
+              <span className="text-xs text-muted-foreground">Law 12.4 · Serious foul play</span>
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 className="text-3xl font-bold tracking-tight text-destructive">RED CARD</h2>
-              <span className="font-mono text-lg">91%</span>
+              <h2 className="rounded-panel bg-surface-red-200 px-3 py-1 text-3xl font-bold tracking-tight text-destructive">RED CARD</h2>
+              <span className="text-lg">91%</span>
               <span className="text-xs text-muted-foreground">confidence</span>
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
               Studs-first contact above the ankle at 30.6 km/h, with no clean ball contact. The excessive-force threshold is met on the contact profile and follow-through.
             </p>
           </div>
-          <div className="flex min-w-36 flex-col justify-center gap-2 rounded-lg bg-muted/50 p-3 text-sm">
+          <div className="flex min-w-36 flex-col justify-center gap-2 rounded-panel bg-surface-red-100 p-3 text-sm">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">On-field call</span>
             <span className="font-semibold">YELLOW <span className="px-1 text-muted-foreground">→</span> RED</span>
             <span className="text-xs text-muted-foreground">One tier lenient · 4–1 panel vote</span>
@@ -110,7 +110,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-base">Criteria ladder</CardTitle>
+          <CardTitle className="desk-type-section">Criteria ladder</CardTitle>
           <Badge variant="outline">6 / 6 considered</Badge>
         </CardHeader>
         <CardContent className="grid gap-2 md:grid-cols-2">
@@ -119,7 +119,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
               type="button"
               key={criterion.id}
               onClick={() => onCriterion(criterion)}
-              className="rounded-lg border p-3 text-left transition hover:border-primary/50 hover:bg-muted/40"
+              className="rounded-panel border p-3 text-left transition hover:border-primary/50 hover:bg-muted/40"
             >
               <div className="flex items-start gap-2.5">
                 <StatusMark status={criterion.status} />
@@ -139,7 +139,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">What the officials decided</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="desk-type-section">What the officials decided</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-md bg-muted/50 p-2"><span className="block text-muted-foreground">On-field</span><b>Yellow card</b></div>
@@ -154,7 +154,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
         </Card>
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-base">Law basis</CardTitle>
+            <CardTitle className="desk-type-section">Law basis</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => onTab("laws")}>All five <ArrowUpRight className="ml-1 size-3.5" /></Button>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -171,7 +171,7 @@ function DecisionView({ onCriterion, onTab, onJump }) {
         </Card>
       </div>
 
-      <div className="rounded-lg border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
+      <div className="rounded-panel border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
         <CircleHelp className="mr-2 inline size-4 text-primary" />
         {ACTUAL_DECISION.disclaimer}
       </div>
@@ -183,10 +183,10 @@ function LawsView() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><Badge variant="secondary" className="w-fit">IFAB Laws of the Game · 2025/26</Badge><CardTitle className="mt-2">Law 12 — Fouls & misconduct</CardTitle></CardHeader>
+        <CardHeader><Badge variant="secondary" className="w-fit">IFAB Laws of the Game · 2026/27</Badge><CardTitle className="mt-2">Law 12 — Fouls & misconduct</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
           {LAW_LINKS.map((law) => (
-            <a key={law.ref} href={law.url} target="_blank" rel="noreferrer" className="rounded-lg border p-4 transition hover:border-primary/50 hover:bg-muted/30">
+            <a key={law.ref} href={law.url} target="_blank" rel="noreferrer" className="rounded-panel border p-4 transition hover:border-primary/50 hover:bg-muted/30">
               <div className="flex items-center justify-between gap-3"><Badge variant="outline">{law.ref}</Badge><ArrowUpRight className="size-4 text-muted-foreground" /></div>
               <h3 className="mt-3 text-sm font-semibold">{law.title}</h3>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">{law.body}</p>
@@ -196,14 +196,14 @@ function LawsView() {
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-base">Sanction ladder</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="desk-type-section">Sanction ladder</CardTitle></CardHeader>
         <CardContent className="grid gap-2 md:grid-cols-3">
           {[
             ["Careless", "No card", "Lack of attention or precaution"],
             ["Reckless", "Caution · yellow", "Disregard to danger or consequences"],
             ["Excessive force", "Send-off · red", "Endangers safety or uses brutality"],
           ].map(([level, sanction, detail]) => (
-            <div key={level} className={`rounded-lg border p-3 ${level === "Excessive force" ? "border-primary/50 bg-primary/5" : "bg-muted/30"}`}>
+              <div key={level} className={`rounded-panel border p-3 ${level === "Excessive force" ? "border-border-active bg-surface-red-100" : "border-border bg-muted/30"}`}>
               <b className="text-xs uppercase tracking-wider">{level}</b>
               <p className="mt-1 text-sm font-semibold">{sanction}</p>
               <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
@@ -212,7 +212,7 @@ function LawsView() {
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-base">VAR gate</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="desk-type-section">VAR gate</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm leading-6 text-muted-foreground">
           <p>{ACTUAL_DECISION.overturnGate}</p>
           <a className="inline-flex items-center gap-1 text-primary" href="https://www.theifab.com/laws/latest/video-assistant-referee-var-protocol/" target="_blank" rel="noreferrer">Read the VAR protocol <ArrowUpRight className="size-4" /></a>
@@ -226,7 +226,7 @@ function CompareView({ onJump }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0"><div><Badge variant="secondary">League outcomes</Badge><CardTitle className="mt-2 text-base">Same contact profile</CardTitle></div><Badge variant="outline">n = 148</Badge></CardHeader>
+        <CardHeader className="flex-row items-start justify-between space-y-0"><div><Badge variant="secondary">League outcomes</Badge><CardTitle className="mt-2 desk-type-section">Same contact profile</CardTitle></div><Badge variant="outline">n = 148</Badge></CardHeader>
         <CardContent>
           <div className="flex h-4 overflow-hidden rounded-full bg-muted" aria-label="Simulated league outcome distribution">
             {LEAGUE_DISTRIBUTION.map((item) => <div key={item.label} className={item.label === "Red card" ? "bg-destructive" : item.label === "Yellow card" ? "bg-primary" : "bg-muted-foreground"} style={{ width: `${item.value}%` }} title={`${item.label}: ${item.value}%`} />)}
@@ -245,14 +245,14 @@ function CompareView({ onJump }) {
                 <div><p className="text-xs text-muted-foreground">{comparison.context}</p><h3 className="mt-1 font-semibold">{comparison.fixture} · {comparison.minute}</h3></div>
                 <Badge variant={comparison.outcome === "RED" ? "destructive" : "secondary"}>{comparison.outcome}</Badge>
               </div>
-              <div className="flex items-center gap-3 text-xs"><div className="h-1.5 flex-1 overflow-hidden rounded bg-muted"><div className="h-full rounded bg-primary" style={{ width: `${comparison.similar * 100}%` }} /></div><span className="font-mono">{Math.round(comparison.similar * 100)}% similar</span></div>
+              <div className="flex items-center gap-3 text-xs"><div className="h-1.5 flex-1 overflow-hidden rounded bg-muted"><div className="h-full rounded bg-primary" style={{ width: `${comparison.similar * 100}%` }} /></div><span className="">{Math.round(comparison.similar * 100)}% similar</span></div>
               <p className="text-sm leading-5 text-muted-foreground">{comparison.note}</p>
-              <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-muted-foreground">{comparison.source}</span><Button size="sm" variant="outline" onClick={() => onJump(1.9)}>Open frame</Button></div>
+              <div className="flex items-center justify-between gap-2"><span className="desk-type-meta text-muted-foreground">{comparison.source}</span><Button size="sm" variant="outline" onClick={() => onJump(1.9)}>Open frame</Button></div>
             </CardContent>
           </Card>
         ))}
       </div>
-      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs leading-5 text-muted-foreground"><AlertTriangle className="mr-2 inline size-4 text-primary" />Similarity is a weighted retrieval aid over contact height, entry angle, stud exposure, speed and ball proximity. It is not a precedent.</div>
+      <div className="rounded-panel border border-border bg-surface-red-50 p-3 text-xs leading-5 text-muted-foreground"><AlertTriangle className="mr-2 inline size-4 text-primary" />Similarity is a weighted retrieval aid over contact height, entry angle, stud exposure, speed and ball proximity. It is not a precedent.</div>
     </div>
   );
 }
@@ -270,10 +270,10 @@ function MotionView() {
       <Card>
         <CardHeader><Badge variant="secondary" className="w-fit">Biomechanical readout</Badge><CardTitle className="mt-2">Contact kinematics</CardTitle></CardHeader>
         <CardContent>
-          <div className="divide-y rounded-lg border px-3">
+          <div className="divide-y rounded-panel border px-3">
             {joints.map(([label, value, percentage]) => (
               <div key={label} className="grid grid-cols-[1fr_auto] items-center gap-3 py-3 sm:grid-cols-[1fr_auto_2fr]">
-                <span className="text-sm">{label}</span><b className="font-mono text-sm">{value}</b>
+                <span className="text-sm">{label}</span><b className="text-sm">{value}</b>
                 <div className="col-span-2 h-1.5 overflow-hidden rounded bg-muted sm:col-span-1"><div className="h-full rounded bg-primary" style={{ width: `${percentage}%` }} /></div>
               </div>
             ))}
@@ -282,7 +282,7 @@ function MotionView() {
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-base">Closing speed</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="desk-type-section">Closing speed</CardTitle></CardHeader>
         <CardContent>
           <svg viewBox="0 0 340 120" className="h-40 w-full" role="img" aria-label="Tackler and carrier speeds over the incident">
             {[10, 40, 70, 100].map((y) => <line key={y} x1="0" x2="340" y1={y} y2={y} className="stroke-border" strokeWidth="1" />)}
@@ -295,7 +295,7 @@ function MotionView() {
         </CardContent>
       </Card>
       <div className="grid gap-3 sm:grid-cols-2">
-        {METRICS.map((metric) => <Card key={metric.label}><CardContent className="p-4"><p className="text-xs text-muted-foreground">{metric.label}</p><p className="mt-1 font-mono text-xl">{metric.value} <span className="text-sm text-muted-foreground">{metric.unit}</span></p><p className="mt-1 text-xs text-muted-foreground">{metric.cue}</p></CardContent></Card>)}
+        {METRICS.map((metric) => <Card key={metric.label}><CardContent className="p-4"><p className="text-xs text-muted-foreground">{metric.label}</p><p className="mt-1 text-xl">{metric.value} <span className="text-sm text-muted-foreground">{metric.unit}</span></p><p className="mt-1 text-xs text-muted-foreground">{metric.cue}</p></CardContent></Card>)}
       </div>
       <Card><CardHeader><CardTitle className="text-sm">Model disclosure</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">The lead-up motion is a synthetic reconstruction. Contact force is a heuristic band (±18%), not a measured load. Tracking, ball physics and panel findings are simulated for demonstration.</CardContent></Card>
     </div>
@@ -371,11 +371,11 @@ export default function MatchTab() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2"><Badge>Match desk</Badge><span className="text-xs text-muted-foreground">{MATCH.competition} · {MATCH.round}</span></div>
-          <h1 className="text-2xl font-semibold tracking-tight">{MATCH.home.name} <span className="font-mono">{MATCH.score[0]}–{MATCH.score[1]}</span> {MATCH.away.name}</h1>
+          <h1 className="desk-type-page">{MATCH.home.name} <span className="">{MATCH.score[0]}–{MATCH.score[1]}</span> {MATCH.away.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{MATCH.stadium} · {MATCH.attendance} · Incident {MATCH.incidentId}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -392,7 +392,7 @@ export default function MatchTab() {
         <p className="text-xs text-muted-foreground">Agent service is running.</p>
       ) : null}
 
-      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1" role="tablist" aria-label="Match analysis">
+      <div className="flex flex-wrap gap-1 rounded-panel border bg-muted/30 p-1" role="tablist" aria-label="Match analysis">
         {TABS.map((item) => <Button key={item.id} role="tab" aria-selected={tab === item.id} size="sm" variant={tab === item.id ? "secondary" : "ghost"} onClick={() => setTab(item.id)}>{item.label}</Button>)}
       </div>
 
@@ -401,7 +401,7 @@ export default function MatchTab() {
       {tab === "compare" ? <CompareView onJump={(time) => jumpTo(time, "broadcast")} /> : null}
       {tab === "motion" ? <MotionView /> : null}
 
-      <div className="flex flex-wrap justify-between gap-2 border-t pt-3 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap justify-between gap-2 border-t pt-3 desk-type-meta text-muted-foreground">
         <span>{ACTUAL_DECISION.panel} · Synthetic review</span>
         <span>Event data, tracking and votes are simulated.</span>
       </div>

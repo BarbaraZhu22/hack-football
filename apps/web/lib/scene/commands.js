@@ -15,8 +15,8 @@ function createInitialSceneState() {
       lookAt: [27, 0, 10],
     },
     players: [
-      { id: "6", team: "home", position: [incidentFrame.tackler.x, incidentFrame.tackler.comY, incidentFrame.tackler.z] },
-      { id: "8", team: "away", position: [incidentFrame.carrier.x, incidentFrame.carrier.comY, incidentFrame.carrier.z] },
+      { id: "24", team: "home", position: [incidentFrame.tackler.x, incidentFrame.tackler.comY, incidentFrame.tackler.z] },
+      { id: "7", team: "away", position: [incidentFrame.carrier.x, incidentFrame.carrier.comY, incidentFrame.carrier.z] },
     ],
     ball: { position: [incidentFrame.ball.p.x, incidentFrame.ball.p.y, incidentFrame.ball.p.z] },
     arrows: [],
@@ -45,8 +45,8 @@ function withIncidentFrame(state, time) {
     ...state,
     incident: { ...state.incident, time: nextTime, frame },
     players: [
-      { id: "6", team: "home", position: [frame.tackler.x, frame.tackler.comY, frame.tackler.z] },
-      { id: "8", team: "away", position: [frame.carrier.x, frame.carrier.comY, frame.carrier.z] },
+      { id: "24", team: "home", position: [frame.tackler.x, frame.tackler.comY, frame.tackler.z] },
+      { id: "7", team: "away", position: [frame.carrier.x, frame.carrier.comY, frame.carrier.z] },
     ],
     ball: { position: [frame.ball.p.x, frame.ball.p.y, frame.ball.p.z] },
   };

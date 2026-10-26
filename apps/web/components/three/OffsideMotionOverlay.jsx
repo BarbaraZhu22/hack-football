@@ -1,5 +1,7 @@
 "use client";
 
+import { CANVAS_FONT_FAMILY } from "@/lib/typography";
+
 import { useEffect, useMemo, useRef } from "react";
 import { Line } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
@@ -35,7 +37,7 @@ function makeImpulseLabel() {
     ctx.lineWidth = 3;
     ctx.stroke();
     ctx.fillStyle = "#ffd166";
-    ctx.font = "700 40px Inter, Helvetica, Arial, sans-serif";
+    ctx.font = `700 40px ${CANVAS_FONT_FAMILY}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, 512, 94);

@@ -11,33 +11,6 @@
 
 const STROKE = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round" };
 
-export function BallIcon({ size = 15, missed = false, className }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      className={className}
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9.4" stroke="currentColor" strokeWidth="1.7" fill="none" />
-      <path d="M12 8.4 L15.42 10.89 L14.12 14.91 L9.88 14.91 L8.58 10.89 Z" fill="currentColor" />
-      <path d="M8.9 4.6 L15.1 4.6 L13.6 7.1 L10.4 7.1 Z" fill="currentColor" opacity="0.8" />
-      <path d="M4.1 9.2 L4.1 14.4 L6.5 13.2 L6.5 10.4 Z" fill="currentColor" opacity="0.8" />
-      <path d="M19.9 9.2 L19.9 14.4 L17.5 13.2 L17.5 10.4 Z" fill="currentColor" opacity="0.8" />
-      <path d="M9.9 19.4 L14.1 19.4 L13.3 17 L10.7 17 Z" fill="currentColor" opacity="0.8" />
-      {missed ? (
-        <path
-          d="M3.6 3.6 L20.4 20.4"
-          stroke="#e5484d"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-        />
-      ) : null}
-    </svg>
-  );
-}
-
 export function BootIcon({ size = 15, className }) {
   return (
     <svg

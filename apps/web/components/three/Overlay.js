@@ -1,3 +1,4 @@
+import { CANVAS_FONT_FAMILY } from "@/lib/typography";
 import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -18,7 +19,7 @@ function makeTextSprite(text, color = '#fff7d6') {
     ctx.lineWidth = 3;
     ctx.stroke();
     ctx.fillStyle = color;
-    ctx.font = '700 62px Inter, Helvetica, Arial, sans-serif';
+    ctx.font = `700 62px ${CANVAS_FONT_FAMILY}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, 512, 94);

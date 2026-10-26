@@ -5,14 +5,18 @@ import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
 import AgentPanel from "@/components/overview/AgentPanel";
+import LiveTrackingFrame from "@/components/overview/LiveTrackingFrame";
 import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventTimeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FootballIcon } from "@/components/ui/football-icon";
 import { MATCH } from "@/lib/incident";
 import { getIncident, RATINGS } from "@/lib/incidents";
 import { cn } from "@/lib/utils";
 
 const AXIS_MINUTES = 95;
 const HALFTIME = 45;
+const MOMENTUM_BUCKET_SECONDS = 120;
+const MOMENTUM_HEIGHT_SCALE = 3.75;
 
 // Left column: the decision timeline used to be 5fr against a 6fr stats panel.
 // It is now 4.25fr (= 0.85 x 5fr, i.e. 15% narrower) while the stats panel
@@ -42,12 +46,12 @@ function LiveClock({ clock, connection }) {
         ? "Offline"
         : "Connecting";
   return (
-    <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1">
-      <span className={cn("size-1.5 rounded-full bg-red-500", connection === "live" ? "animate-pulse" : "")} />
-      <span className="font-mono text-sm font-bold tabular-nums tracking-tight text-red-600 dark:text-red-400">
+    <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1">
+      <span className={cn("size-1.5 rounded-full bg-primary", connection === "live" ? "animate-pulse" : "")} />
+      <span className="text-sm font-bold tabular-nums tracking-tight text-primary">
         {clock.label}
       </span>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-red-600/80 dark:text-red-400/80">
+      <span className="desk-type-meta font-semibold uppercase tracking-[0.14em] text-primary/80">
         {label}
       </span>
     </span>
@@ -119,15 +123,33 @@ function formatStat(value, unit) {
   return unit ? `${value}${unit}` : String(value);
 }
 
-function DecisionRow({ decision }) {
-  const rating = {
-    correct: RATINGS.green,
-    questionable: RATINGS.amber,
-    controversial: RATINGS.red,
-  }[decision.type] || RATINGS.green;
+function decisionDescription(decision) {
+  const team = decision.teamCode;
+  switch (decision.decisionKind) {
+    case "foul":
+      return team ? `Free kick to ${team}` : "Free kick awarded";
+    case "corner-awarded":
+      return team ? `Corner to ${team}` : "Corner awarded";
+    case "penalty-awarded":
+      return team ? `Penalty to ${team}` : "Penalty awarded";
+    case "offside":
+      return "Offside";
+    case "yellow":
+      return decision.player ? `Yellow card · ${decision.player}` : "Yellow card";
+    case "red":
+      return decision.player ? `Red card · ${decision.player}` : "Red card";
+    case "warning":
+      return decision.player ? `Verbal warning · ${decision.player}` : "Verbal warning";
+    default:
+      return decision.detail || "";
+  }
+}
+
+function DecisionRow({ decision, controversial }) {
   const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
-  const reconstructed = incident?.status === "active";
+  const rating = controversial ? RATINGS.red : RATINGS.green;
   const minuteLabel = (decision.minuteLabel || decision.minute) + "'";
+  const description = decisionDescription(decision);
 
   const body = (
     <div className="relative flex gap-2 py-0.5">
@@ -139,36 +161,36 @@ function DecisionRow({ decision }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="font-mono text-xs font-medium">{minuteLabel}</span>
+          <span className="text-xs font-medium">{minuteLabel}</span>
           <span className="text-xs font-medium">{decision.label}</span>
           <span
-            className="rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wider"
+            className="rounded-full px-1.5 py-0.5 desk-type-meta uppercase tracking-wider"
             style={{ color: rating.color, backgroundColor: `${rating.color}1f` }}
           >
             {rating.label}
           </span>
-          {incident ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-primary">
-              {reconstructed ? "Open 3D review" : "Open review"} <ArrowUpRight className="size-3" />
+          {controversial && incident?.status === "active" ? (
+            <span className="inline-flex items-center gap-1 desk-type-meta font-medium text-primary">
+              3D review <ArrowUpRight className="size-3" />
             </span>
           ) : null}
         </div>
-        <p className="mt-0.5 truncate text-[11px] leading-4 text-muted-foreground">
+        <p className="mt-0.5 break-words text-xs leading-4 text-muted-foreground">
           {decision.meta ? (
-            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            <span className="desk-type-meta uppercase tracking-wider text-muted-foreground/70">
               {decision.meta}
             </span>
           ) : null}
-          {decision.meta && decision.detail ? " · " : ""}
-          {decision.detail}
+          {decision.meta && description ? " · " : ""}
+          {description}
         </p>
       </div>
     </div>
   );
 
-  if (incident) {
+  if (controversial && incident?.status === "active") {
     return (
-      <Link href={`/pitch?incident=${incident.id}`} className="group block rounded-lg px-1 transition hover:bg-muted/40">
+      <Link href={`/pitch?incident=${incident.id}`} className="group block rounded-panel px-1 transition hover:bg-muted/40">
         {body}
       </Link>
     );
@@ -177,47 +199,52 @@ function DecisionRow({ decision }) {
 }
 
 function StatBarRow({ row, match }) {
-  const homeLeads = row.home >= row.away;
-  const share = (homeLeads ? row.home : row.away) / Math.max(1, row.home + row.away);
-  const color = homeLeads ? match.home.color : match.away.color;
+  const homeValue = Math.max(0, Number(row.home) || 0);
+  const awayValue = Math.max(0, Number(row.away) || 0);
+  const total = homeValue + awayValue;
+  const homeShare = total ? (homeValue / total) * 100 : 0;
+  const awayShare = total ? (awayValue / total) * 100 : 0;
   return (
     <div className="py-0.5">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="font-mono font-medium">{formatStat(row.home, row.unit)}</span>
-        <span className="truncate text-muted-foreground">{row.label}</span>
-        <span className="font-mono font-medium">{formatStat(row.away, row.unit)}</span>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs">
+        <span className="font-medium">{formatStat(row.home, row.unit)}</span>
+        <span className="text-center text-muted-foreground">{row.label}</span>
+        <span className="justify-self-end font-medium">{formatStat(row.away, row.unit)}</span>
       </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full" style={{ width: `${share * 100}%`, backgroundColor: color }} />
+      <div className="mt-1 grid grid-cols-2 gap-3">
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="ml-auto h-full rounded-full"
+            style={{
+              width: `${homeShare}%`,
+              backgroundColor: match.home.color,
+              opacity: homeValue >= awayValue ? 1 : 0.35,
+            }}
+          />
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${awayShare}%`,
+              backgroundColor: match.away.color,
+              opacity: awayValue >= homeValue ? 1 : 0.35,
+            }}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
-function BallIcon({ missed }) {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" fill={missed ? "#c9cfc9" : "#f8faf6"} stroke="#16241c" strokeWidth="1.6" />
-      <path d="M12 6.8 L16 9.8 L14.3 14.8 L9.7 14.8 L8 9.8 Z" fill="#16241c" />
-      {missed ? <path d="M4 4 L20 20 M20 4 L4 20" stroke="#e24b4a" strokeWidth="2.6" strokeLinecap="round" /> : null}
-    </svg>
-  );
-}
-
 function PenaltyIcon({ missed }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" fill="#f8faf6" stroke="#16241c" strokeWidth="1.6" />
-      <text x="12" y="16.5" textAnchor="middle" fontSize="12" fontWeight="700" fill="#16241c">P</text>
-      {missed ? <path d="M4.5 4.5 L19.5 19.5 M19.5 4.5 L4.5 19.5" stroke="#e24b4a" strokeWidth="2.4" strokeLinecap="round" /> : null}
-    </svg>
-  );
+  return <FootballIcon size={14} className="text-emerald-600" missed={missed} />;
 }
 
 function CardIcon({ color }) {
   return (
     <span
-      className="block h-3.5 w-2.5 rounded-[2px]"
+      className="relative top-px block h-3 w-2 rounded-[2px]"
       style={{ backgroundColor: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.3)" }}
     />
   );
@@ -232,27 +259,17 @@ function SubIcon({ color }) {
   );
 }
 
-function VarIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="3" y="5" width="18" height="12" rx="2" fill="#f8faf6" stroke="#16241c" strokeWidth="1.6" />
-      <path d="M9 9.5 h5 v3.2 h-5 z" fill="none" stroke="#16241c" strokeWidth="1.3" />
-      <path d="M12 17 v2.4 M8.5 21 h7" stroke="#16241c" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function EventIcon({ event, match }) {
   const color = teamColor(event.team, match);
   const left = (event.minute / AXIS_MINUTES) * 100;
   let icon = null;
-  if (event.type === "goal") icon = <BallIcon />;
-  else if (event.type === "penalty-goal") icon = <PenaltyIcon />;
+  if (event.type === "goal") icon = <FootballIcon size={13} />;
+  else if (event.type === "penalty-goal") icon = <FootballIcon size={13} className="text-emerald-600" />;
+  else if (event.type === "own-goal") icon = <FootballIcon size={13} className="text-violet-600" />;
   else if (event.type === "penalty-missed") icon = <PenaltyIcon missed />;
   else if (event.type === "yellow") icon = <CardIcon color="#f3c847" />;
   else if (event.type === "red") icon = <CardIcon color="#e24b4a" />;
   else if (event.type === "sub") icon = <SubIcon color={color} />;
-  else if (event.type === "var") icon = <VarIcon />;
   const marker = (
     <span
       className="absolute top-0 -translate-x-1/2 transition hover:scale-125"
@@ -262,7 +279,7 @@ function EventIcon({ event, match }) {
       {icon}
     </span>
   );
-  if (event.incidentId) {
+  if (event.incidentId && getIncident(event.incidentId)?.status === "active") {
     return (
       <Link
       href={"/pitch?incident=" + event.incidentId}
@@ -277,68 +294,106 @@ function EventIcon({ event, match }) {
   return marker;
 }
 
-function MomentumChart({ match, events, values }) {
+function MomentumChart({ match, events, values, clock }) {
   const homeEvents = events.filter((event) => event.team === "home");
   const awayEvents = events.filter((event) => event.team === "away");
   const momentum = values;
+  const elapsedSeconds = Math.max(0, Number(clock?.seconds) || 0);
   return (
     <div className="min-w-0">
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium">Momentum</span>
-        <span className="font-mono text-muted-foreground">0 – 90+</span>
+        <span className="text-muted-foreground">0 – 90+</span>
       </div>
       <div className="relative mt-2.5">
-        <div className="relative h-3.5">
-          {homeEvents.map((event) => (
-            <EventIcon key={event.id} event={event} match={match} />
-          ))}
-        </div>
-        <div className="relative flex h-[76px] overflow-hidden rounded-md border">
-          <div className="absolute inset-x-0 top-0 h-1/2" style={{ backgroundColor: match.home.color + "14" }} />
-          <div className="absolute inset-x-0 bottom-0 h-1/2" style={{ backgroundColor: match.away.color + "14" }} />
-          <div className="absolute inset-x-0 top-0 flex h-1/2 items-end gap-px px-1">
-            {momentum.map((value, index) => (
-              <div key={"up-" + index} className="flex h-full flex-1 items-end justify-center">
-                {value >= 0 ? (
-                  <div
-                    className="w-full max-w-[7px] rounded-t-sm"
-                    style={{ height: `${Math.max(6, value * 100)}%`, backgroundColor: match.home.color }}
-                  />
-                ) : null}
-              </div>
-            ))}
-          </div>
-          <div className="absolute inset-x-0 bottom-0 flex h-1/2 items-start gap-px border-t border-border/70 px-1">
-            {momentum.map((value, index) => (
-              <div key={"down-" + index} className="flex h-full flex-1 items-start justify-center">
-                {value < 0 ? (
-                  <div
-                    className="w-full max-w-[7px] rounded-b-sm"
-                    style={{ height: `${Math.max(6, -value * 100)}%`, backgroundColor: match.away.color }}
-                  />
-                ) : null}
-              </div>
-            ))}
-          </div>
-          <div
-            className="absolute bottom-0 top-0 w-px bg-border"
-            style={{ left: `${(HALFTIME / AXIS_MINUTES) * 100}%` }}
-          />
-          <span className="absolute left-1.5 top-1 flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 text-[9px] font-semibold">
+        <div className="relative h-9">
+          <span className="absolute left-1 top-0 inline-flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 desk-type-meta font-semibold">
             <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
             {match.home.code}
           </span>
-          <span className="absolute bottom-1 left-1.5 flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 text-[9px] font-semibold">
+          <div className="absolute inset-x-0 bottom-0 h-3.5">
+            {homeEvents.map((event) => (
+              <EventIcon key={event.id} event={event} match={match} />
+            ))}
+          </div>
+        </div>
+        <div className="relative h-[76px] overflow-hidden rounded-md border">
+          <div className="absolute inset-x-0 top-0 h-1/2" style={{ backgroundColor: match.home.color + "14" }} />
+          <div className="absolute inset-x-0 bottom-0 h-1/2" style={{ backgroundColor: match.away.color + "14" }} />
+          <div className="absolute inset-x-0 top-0 h-1/2">
+            {momentum.map((value, index) => {
+              const startSeconds = index * MOMENTUM_BUCKET_SECONDS;
+              const visibleSeconds = Math.max(0, Math.min(
+                MOMENTUM_BUCKET_SECONDS,
+                elapsedSeconds - startSeconds,
+              ));
+              if (visibleSeconds === 0 || value <= 0) return null;
+              const barHeight = Math.max(12, Math.min(100, value * 100 * MOMENTUM_HEIGHT_SCALE)) * 0.7 + "%";
+              return (
+                <div
+                  key={"up-" + index}
+                  className="absolute inset-y-0 flex items-end justify-start"
+                  style={{
+                    left: (startSeconds / (AXIS_MINUTES * 60)) * 100 + "%",
+                    width: (visibleSeconds / (AXIS_MINUTES * 60)) * 100 + "%",
+                  }}
+                >
+                  <div
+                    className="w-full max-w-[7px] rounded-t-sm"
+                    style={{ height: barHeight, backgroundColor: match.home.color }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/70">
+            {momentum.map((value, index) => {
+              const startSeconds = index * MOMENTUM_BUCKET_SECONDS;
+              const visibleSeconds = Math.max(0, Math.min(
+                MOMENTUM_BUCKET_SECONDS,
+                elapsedSeconds - startSeconds,
+              ));
+              if (visibleSeconds === 0 || value >= 0) return null;
+              const barHeight = Math.max(12, Math.min(100, -value * 100 * MOMENTUM_HEIGHT_SCALE)) * 0.7 + "%";
+              return (
+                <div
+                  key={"down-" + index}
+                  className="absolute inset-y-0 flex items-start justify-start"
+                  style={{
+                    left: (startSeconds / (AXIS_MINUTES * 60)) * 100 + "%",
+                    width: (visibleSeconds / (AXIS_MINUTES * 60)) * 100 + "%",
+                  }}
+                >
+                  <div
+                    className="w-full max-w-[7px] rounded-b-sm"
+                    style={{ height: barHeight, backgroundColor: match.away.color }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div
+            className="absolute bottom-0 top-0 w-px bg-border"
+            style={{ left: (HALFTIME / AXIS_MINUTES) * 100 + "%" }}
+          />
+          <div
+            className="absolute bottom-0 top-0 w-px bg-foreground/40"
+            style={{ left: Math.min(100, (elapsedSeconds / (AXIS_MINUTES * 60)) * 100) + "%" }}
+            aria-label="Current match time"
+          />
+        </div>
+        <div className="relative h-9">
+          <div className="absolute inset-x-0 top-0 h-3.5">
+            {awayEvents.map((event) => (
+              <EventIcon key={event.id} event={event} match={match} />
+            ))}
+          </div>
+          <span className="absolute bottom-0 left-1 inline-flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 desk-type-meta font-semibold">
             <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
             {match.away.code}
           </span>
         </div>
-        <div className="relative h-3.5">
-          {awayEvents.map((event) => (
-            <EventIcon key={event.id} event={event} match={match} />
-          ))}
-        </div>
-        <div className="mt-0.5 flex items-center justify-between font-mono text-[10px] text-muted-foreground">
+        <div className="mt-0.5 flex items-center justify-between desk-type-meta text-muted-foreground">
           <span>0&apos;</span>
           <span>45&apos;</span>
           <span>90+&apos;</span>
@@ -356,7 +411,7 @@ function LineupPitch({ match, players }) {
         <span className="text-muted-foreground">Rating / 10</span>
       </div>
       <div
-        className="relative mt-1.5 aspect-[2/3] overflow-hidden rounded-lg border"
+        className="relative mt-1.5 aspect-[2/3] overflow-hidden rounded-panel border border-border"
         style={{ backgroundColor: "#166534" }}
       >
         <div className="absolute inset-1.5 rounded border border-white/35" />
@@ -385,7 +440,7 @@ function LineupPitch({ match, players }) {
               </span>
               {hasRating ? (
                 <span
-                  className="-mt-0.5 grid h-[11px] min-w-[20px] place-items-center rounded-[2px] px-0.5 font-mono text-[7px] font-bold leading-none text-white shadow-sm"
+                  className="-mt-0.5 grid h-[11px] min-w-[20px] place-items-center rounded-[2px] px-0.5 text-[7px] font-bold leading-none text-white shadow-sm"
                   style={{ backgroundColor: playerRatingColor(player.rating) }}
                 >
                   {player.rating.toFixed(1)}
@@ -398,7 +453,7 @@ function LineupPitch({ match, players }) {
           );
         })}
       </div>
-      <div className="mt-1.5 flex gap-4 text-[10px] text-muted-foreground">
+      <div className="mt-1.5 flex gap-4 desk-type-meta text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
           {match.away.code} 4-3-3
@@ -422,7 +477,7 @@ function TabSwitch({ value, onChange, options }) {
           onClick={() => onChange(option.id)}
           aria-pressed={value === option.id}
           className={cn(
-            "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+            "rounded px-2 py-1 desk-type-meta font-medium transition-colors",
             value === option.id
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -435,162 +490,6 @@ function TabSwitch({ value, onChange, options }) {
   );
 }
 
-function PlaybackFrame({ frame, match, people = [] }) {
-  const actors = frame?.actors?.filter((actor) => actor.status === "active") || [];
-  const positionsByPersonId = new Map(people.map((person) => [person.personId, person.position]));
-  const [animatedBall, setAnimatedBall] = useState(frame?.ball || null);
-  const ballPositionRef = useRef(null);
-  const displayedFrameRef = useRef(null);
-  useEffect(() => {
-    if (!frame?.ball) return undefined;
-    const frameKey = frame.frameId || frame.timeMilliseconds;
-    if (frameKey === displayedFrameRef.current) return undefined;
-    displayedFrameRef.current = frameKey;
-
-    const target = { x: frame.ball.x, y: frame.ball.y };
-    const from = ballPositionRef.current;
-    if (!from) {
-      ballPositionRef.current = target;
-      setAnimatedBall(target);
-      return undefined;
-    }
-
-    const dx = target.x - from.x;
-    const dy = target.y - from.y;
-    const span = Math.hypot(dx, dy);
-    const bend = Math.min(1.8, span * 0.045) * (frame.possession?.teamCode === match.home.code ? 1 : -1);
-    const control = span > 0
-      ? { x: (from.x + target.x) / 2 - (dy / span) * bend, y: (from.y + target.y) / 2 + (dx / span) * bend }
-      : target;
-    const startedAt = performance.now();
-    const duration = 900;
-    let animationFrame = 0;
-    const animate = (now) => {
-      const progress = Math.max(0, Math.min(1, (now - startedAt) / duration));
-      const inverse = 1 - progress;
-      const position = {
-        x: inverse * inverse * from.x + 2 * inverse * progress * control.x + progress * progress * target.x,
-        y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * target.y,
-      };
-      ballPositionRef.current = position;
-      setAnimatedBall(position);
-      if (progress < 1) animationFrame = requestAnimationFrame(animate);
-    };
-    animationFrame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [frame?.frameId, frame?.timeMilliseconds, frame?.ball?.x, frame?.ball?.y, frame?.possession?.teamCode, match.home.code]);
-  const viewWidth = 111;
-  const viewHeight = 68;
-  const pitchWidthRatio = (viewWidth / viewHeight) / (16 / 9);
-  const pitchSideGutter = (1 - pitchWidthRatio) / 2;
-  const point = (x, y) => ({
-    left: `${(pitchSideGutter + ((x + 55.5) / viewWidth) * pitchWidthRatio) * 100}%`,
-    top: `${Math.max(1, Math.min(99, ((y + 34) / 68) * 100))}%`,
-  });
-  return (
-    <Card className="shrink-0 overflow-hidden">
-      <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
-        <CardTitle className="text-sm">Live tracking</CardTitle>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
-          <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
-          {frame?.clockLabel || "Waiting for frame"}
-        </span>
-      </CardHeader>
-      <CardContent className="py-2">
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-emerald-800" aria-label="Live player and ball tracking frame">
-          <svg
-            className="absolute inset-0 size-full"
-            viewBox="-3 0 111 68"
-            preserveAspectRatio="xMidYMid meet"
-            aria-hidden="true"
-          >
-            <g fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="0.28">
-              <rect x="0.85" y="0.85" width="103.3" height="66.3" />
-              <line x1="52.5" y1="0.85" x2="52.5" y2="67.15" />
-              <circle cx="52.5" cy="34" r="9.15" />
-              <rect x="0.85" y="13.84" width="16.5" height="40.32" />
-              <rect x="87.65" y="13.84" width="16.5" height="40.32" />
-              <rect x="0.85" y="24.84" width="5.5" height="18.32" />
-              <rect x="98.65" y="24.84" width="5.5" height="18.32" />
-              <path d="M 17.35 26.69 A 9.15 9.15 0 0 1 17.35 41.31" />
-              <path d="M 87.65 26.69 A 9.15 9.15 0 0 0 87.65 41.31" />
-              <path d="M 0.85 1.85 A 1 1 0 0 0 1.85 0.85" />
-              <path d="M 103.15 0.85 A 1 1 0 0 0 104.15 1.85" />
-              <path d="M 0.85 66.15 A 1 1 0 0 1 1.85 67.15" />
-              <path d="M 103.15 67.15 A 1 1 0 0 1 104.15 66.15" />
-              <rect x="-1.59" y="30.34" width="2.44" height="7.32" />
-              <rect x="104.15" y="30.34" width="2.44" height="7.32" />
-            </g>
-            <g fill="rgba(255,255,255,0.82)">
-              <circle cx="52.5" cy="34" r="0.24" />
-              <circle cx="11.85" cy="34" r="0.24" />
-              <circle cx="93.15" cy="34" r="0.24" />
-            </g>
-          </svg>
-          {actors.map((actor) => {
-            const isOfficial = !actor.team;
-            const isGoalkeeper = positionsByPersonId.get(actor.person_id || actor.personId) === "GK";
-            const color = isOfficial
-              ? "#facc15"
-              : actor.team === "MCI"
-                ? match.home.color
-                : match.away.color;
-            const roleLabel = actor.role === "main"
-              ? "Referee"
-              : actor.role === "ar1"
-                ? "Assistant referee 1"
-                : actor.role === "ar2"
-                  ? "Assistant referee 2"
-                  : `${actor.team} #${actor.no}`;
-            const positionStyle = {
-              ...point(actor.x, actor.y),
-              transition: "left 1000ms linear, top 1000ms linear",
-              willChange: "left, top",
-            };
-            return isGoalkeeper ? (
-              <svg
-                key={actor.person_id || actor.personId || actor.role}
-                viewBox="0 0 12 12"
-                className="absolute z-10 size-3 -translate-x-1/2 -translate-y-1/2 drop-shadow-sm"
-                style={positionStyle}
-                role="img"
-                aria-label={roleLabel}
-                title={roleLabel}
-              >
-                <path d="M6 0.8 11.2 11H0.8Z" fill={color} stroke="white" strokeWidth="1.2" />
-              </svg>
-            ) : (
-              <span
-                key={actor.person_id || actor.personId || actor.role}
-                className={`absolute z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-sm ${isOfficial ? "border-amber-100" : "border-white"}`}
-                style={{ ...positionStyle, backgroundColor: color }}
-                title={roleLabel}
-              />
-            );
-          })}
-          {animatedBall ? (
-            <svg
-              viewBox="0 0 20 20"
-              className="absolute z-20 size-3.5 -translate-x-1/2 -translate-y-1/2 drop-shadow"
-              style={{
-                ...point(animatedBall.x, animatedBall.y),
-                willChange: "left, top",
-              }}
-              role="img"
-              aria-label="Ball"
-              title="Ball"
-            >
-              <circle cx="10" cy="10" r="8.5" fill="white" stroke="#172018" strokeWidth="1.2" />
-              <path d="m10 5.8 3.4 2.5-1.3 4h-4.2l-1.3-4z" fill="#172018" />
-              <path d="m6.6 8.3-2.7-.9M13.4 8.3l2.7-.9M7.9 12.3l-1.5 2.4M12.1 12.3l1.5 2.4M10 5.8V2.3" fill="none" stroke="#172018" strokeWidth="1.1" />
-            </svg>
-          ) : null}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
   const [snapshot, setSnapshot] = useState(null);
@@ -598,6 +497,7 @@ export default function OverviewTab() {
   const [connection, setConnection] = useState("connecting");
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
+  const [liveEvents, setLiveEvents] = useState([]);
   const framesRef = useRef([]);
 
   useEffect(() => {
@@ -628,6 +528,7 @@ export default function OverviewTab() {
         stream.addEventListener("tick", (message) => {
           if (cancelled) return;
           const tick = JSON.parse(message.data);
+          setLiveEvents(tick.events || []);
           if (tick.frame) {
             framesRef.current.push(tick.frame);
             setCurrentFrame(tick.frame);
@@ -670,6 +571,14 @@ export default function OverviewTab() {
   const events = matchData.events || [];
   const timelineEvents = matchData.timelineEvents || [];
   const decisions = matchData.decisions || [];
+  const controversialDecisionIds = new Set();
+  const reviewedIncidentIds = new Set();
+  for (const decision of decisions) {
+    const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
+    if (incident?.status !== "active" || reviewedIncidentIds.has(incident.id)) continue;
+    reviewedIncidentIds.add(incident.id);
+    controversialDecisionIds.add(decision.id);
+  }
   const phases = matchData.phases || [];
   const statRows = matchData.stats || [];
   const momentum = matchData.momentum || [];
@@ -692,21 +601,21 @@ export default function OverviewTab() {
     };
   });
   const decisionCounts = decisions.reduce((counts, decision) => {
-    if (decision.type in counts) counts[decision.type] += 1;
+    counts[controversialDecisionIds.has(decision.id) ? "controversial" : "correct"] += 1;
     return counts;
   }, { correct: 0, questionable: 0, controversial: 0 });
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-w-0 flex-col gap-4">
       <Card className="shrink-0">
         <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs">
-          <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+          <span className="desk-type-meta uppercase tracking-[0.12em] text-muted-foreground">
             {match.competition} · {match.round}
           </span>
           <span className="flex items-center gap-1.5 font-semibold">
             <span className="size-2.5 rounded-full" style={{ backgroundColor: match.home.color }} />
             {match.home.code}
-            <span className="mx-0.5 font-mono text-base font-bold tracking-tight">
+            <span className="mx-0.5 text-base font-bold tracking-tight">
               {match.score[0]} – {match.score[1]}
             </span>
             {match.away.code}
@@ -719,7 +628,9 @@ export default function OverviewTab() {
             {apiError
               ? "Match data unavailable"
               : snapshot?.dataSource?.ok
-                ? "Match data · PostgreSQL connected"
+                ? snapshot.dataSource.backend === "local-csv"
+                  ? "Local CSV · live replay"
+                  : "Match data · PostgreSQL connected"
                 : snapshot
                   ? "Match data connected"
                   : "Loading match data…"}
@@ -739,10 +650,14 @@ export default function OverviewTab() {
               <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
                 <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
                 {decisions.map((decision) => (
-                  <DecisionRow key={decision.id} decision={decision} />
+                  <DecisionRow
+                    key={decision.id}
+                    decision={decision}
+                    controversial={controversialDecisionIds.has(decision.id)}
+                  />
                 ))}
                 {!decisions.length ? (
-                  <p className="px-1 text-[11px] text-muted-foreground">
+                  <p className="px-1 desk-type-meta text-muted-foreground">
                     {apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
                   </p>
                 ) : null}
@@ -752,7 +667,7 @@ export default function OverviewTab() {
             )}
             <div className="shrink-0 border-t pt-2">
               {timeline === "decisions" ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="desk-type-meta text-muted-foreground">
                   <span className="font-medium" style={{ color: RATINGS.green.color }}>{decisionCounts.correct} correct</span>
                   {" · "}
                   <span className="font-medium" style={{ color: RATINGS.amber.color }}>{decisionCounts.questionable} questionable</span>
@@ -769,9 +684,9 @@ export default function OverviewTab() {
         </Card>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <PlaybackFrame frame={currentFrame} match={match} people={matchData.people || []} />
+          <LiveTrackingFrame frame={currentFrame} match={match} people={matchData.people || []} liveEvents={liveEvents} />
           <div className="flex min-h-0 flex-1 flex-col">
-            <AgentPanel clock={clock} events={events} phases={phases} match={match} />
+            <AgentPanel events={events} phases={phases} match={match} />
           </div>
         </div>
 
@@ -779,9 +694,9 @@ export default function OverviewTab() {
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">
             <div>
               <CardTitle className="text-sm">Match stats</CardTitle>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Mock match stats from the API.</p>
+              <p className="mt-0.5 desk-type-meta text-muted-foreground">Local CSV · recalculated with the live clock.</p>
             </div>
-            <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-2.5 desk-type-meta text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
                 {match.home.code} pushing
@@ -793,7 +708,7 @@ export default function OverviewTab() {
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3">
-            <MomentumChart match={match} events={timelineEvents} values={momentum} />
+            <MomentumChart match={match} events={timelineEvents} values={momentum} clock={clock} />
 
             <div className="grid min-h-0 flex-1 items-start gap-4 border-t pt-3 lg:grid-cols-[1fr_250px]">
               <div className="flex min-h-0 flex-col justify-between">

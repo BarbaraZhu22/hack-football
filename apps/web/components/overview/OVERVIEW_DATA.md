@@ -13,7 +13,7 @@ The Overview reads its mock response from `events.csv` and `frames.csv` through 
 
 ## Overview statistics and motion
 
-Possession and momentum are calculated from tracking frames. Shots, shots on target, expected goals, big chances, passes/accuracy, duels, corners, offsides, saves, fouls, and cards are calculated from explicit event attributes. The lineup pitch uses the latest frame's active players and positions; a substitution therefore changes the displayed personnel.
+Possession is calculated from tracking frames. Match stats are recalculated from the events and frames available at the current clock. Momentum is recalculated on every live tick in two-minute buckets using a trailing five-minute window: possession share (20%), attacking final-third control (25%, with the attacking direction switched at half-time), and shot/goal/penalty/corner pressure (55%, with shots weighted by xG and whether they are on target). The bucket values are smoothed across adjacent buckets and bounded from -1 (away pressure) to +1 (home pressure). The chart places each bucket at its match-time position and advances its live edge with the clock. The lineup pitch uses the latest frame's active players and positions; a substitution therefore changes the displayed personnel.
 
 ## Initial and live data
 

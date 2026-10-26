@@ -1,21 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowUpRight, Whistle } from "lucide-react";
+import { Whistle } from "lucide-react";
 
-import { getIncident } from "@/lib/incidents";
 import {
-  BallIcon,
   BootIcon,
   CardIcon,
   SubIcon,
-  SubOutIcon,
   VarIcon,
 } from "./event-icons";
+import { FootballIcon } from "@/components/ui/football-icon";
 
 const YELLOW = "#f5c518";
 const RED = "#e5484d";
-const EVENT_TYPES = new Set(["goal", "penalty-goal", "penalty-missed", "yellow", "red", "sub", "var"]);
+const EVENT_TYPES = new Set(["goal", "penalty-goal", "own-goal", "penalty-missed", "yellow", "red", "sub", "substitution", "var"]);
 
 function minuteLabel(event) {
   if (event.minuteLabel) return event.minuteLabel.replace(/:.*$/, "");
@@ -25,7 +22,7 @@ function minuteLabel(event) {
 function TeamChip({ team }) {
   return (
     <span
-      className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider"
+      className="shrink-0 rounded px-1.5 py-0.5 desk-type-meta font-bold tracking-wider"
       style={{ color: team.color, backgroundColor: `${team.color}1f` }}
     >
       {team.code}
@@ -44,17 +41,21 @@ function Rail({ children }) {
 
 function EventRow({ event, match }) {
   const team = event.team === "home" ? match.home : match.away;
-  const incident = event.incidentId ? getIncident(event.incidentId) : null;
-  const reconstructed = incident?.status === "active";
 
   let icon = null;
   let title = event.player ?? event.label;
   let detail = null;
   let tag = null;
 
-  if (event.type === "goal" || event.type === "penalty-goal") {
-    icon = <BallIcon />;
+  if (event.type === "goal" || event.type === "penalty-goal" || event.type === "own-goal") {
+    const iconColor = event.type === "penalty-goal"
+      ? "text-emerald-600"
+      : event.type === "own-goal"
+        ? "text-violet-600"
+        : undefined;
+    icon = <FootballIcon className={iconColor} />;
     if (event.type === "penalty-goal") tag = "PEN";
+    if (event.type === "own-goal") tag = "OG";
     detail = event.assist ? (
       <span className="inline-flex items-center gap-1">
         <BootIcon size={12} />
@@ -64,39 +65,26 @@ function EventRow({ event, match }) {
       event.note
     );
   } else if (event.type === "penalty-missed") {
-    icon = <BallIcon missed />;
-    tag = "PEN";
+    icon = <FootballIcon className="text-emerald-600" missed />;
     detail = event.note;
   } else if (event.type === "yellow" || event.type === "red") {
     icon = <CardIcon color={event.type === "yellow" ? YELLOW : RED} />;
     detail = event.note;
-  } else if (event.type === "sub") {
+  } else if (event.type === "sub" || event.type === "substitution") {
     icon = <SubIcon />;
-    detail = (
-      <span className="inline-flex items-center gap-1">
-        <SubOutIcon />
-        {event.replaced}
-      </span>
-    );
+    title = "Substitution";
+    detail = event.player && event.replaced
+      ? `${event.player} on for ${event.replaced}`
+      : event.note;
   } else if (event.type === "var") {
     icon = <VarIcon />;
     title = "VAR review";
     detail = `${event.player} · ${event.note}`;
   }
 
-  const reviewLink = incident ? (
-    <Link
-      href={"/pitch?incident=" + incident.id}
-      className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-primary hover:underline"
-    >
-      {reconstructed ? "Open 3D review" : "Open review"}
-      <ArrowUpRight className="size-3" />
-    </Link>
-  ) : null;
-
   return (
     <div className="group relative flex gap-2">
-      <div className="w-8 shrink-0 pt-[5px] text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+      <div className="w-8 shrink-0 pt-[5px] text-right desk-type-meta tabular-nums text-muted-foreground">
         {minuteLabel(event)}&apos;
       </div>
       <Rail>
@@ -110,24 +98,23 @@ function EventRow({ event, match }) {
             <span className="shrink-0">{icon}</span>
             <span className="truncate text-xs font-semibold">{title}</span>
             {tag ? (
-              <span className="shrink-0 rounded bg-muted px-1 font-mono text-[9px] font-bold tracking-wider text-muted-foreground">
+              <span className="shrink-0 rounded bg-muted px-1 desk-type-meta font-bold tracking-wider text-muted-foreground">
                 {tag}
               </span>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {event.score ? (
-              <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-bold">
+              <span className="rounded bg-muted px-1.5 py-0.5 desk-type-meta font-bold">
                 {event.score}
               </span>
             ) : null}
             <TeamChip team={team} />
           </div>
         </div>
-        {detail || reviewLink ? (
-          <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        {detail ? (
+          <div className="mt-0.5 desk-type-meta text-muted-foreground">
             <span className="flex min-w-0 items-center gap-1 truncate">{detail}</span>
-            {reviewLink}
           </div>
         ) : null}
       </div>
@@ -145,8 +132,8 @@ function PhaseRow({ phase }) {
         </span>
       </Rail>
       <div className="flex flex-1 items-center gap-2 pb-3 pt-0.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{phase.label}</span>
-        <span className="font-mono text-[11px] font-bold">{phase.score}</span>
+        <span className="desk-type-meta font-semibold uppercase tracking-[0.12em]">{phase.label}</span>
+        <span className="desk-type-meta font-bold">{phase.score}</span>
         <span className="h-px flex-1 bg-border" />
       </div>
     </div>
@@ -164,17 +151,19 @@ function Legend({ icon, label }) {
 
 export function EventTimelineLegend({ events = [] }) {
   const goals = events.filter(
-    (event) => event.type === "goal" || event.type === "penalty-goal",
+    (event) => event.type === "goal" || event.type === "penalty-goal" || event.type === "own-goal",
   ).length;
   const cards = events.filter(
     (event) => event.type === "yellow" || event.type === "red",
   ).length;
-  const subs = events.filter((event) => event.type === "sub").length;
+  const subs = events.filter((event) => event.type === "sub" || event.type === "substitution").length;
 
   return (
     <div className="shrink-0">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-        <Legend icon={<BallIcon size={12} />} label="Goal" />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 desk-type-meta text-muted-foreground">
+        <Legend icon={<FootballIcon size={12} />} label="Goal" />
+        <Legend icon={<FootballIcon size={12} className="text-emerald-600" />} label="Penalty" />
+        <Legend icon={<FootballIcon size={12} className="text-violet-600" />} label="Own goal" />
         <Legend icon={<BootIcon size={12} />} label="Assist" />
         <Legend
           icon={
@@ -187,9 +176,9 @@ export function EventTimelineLegend({ events = [] }) {
         />
         <Legend icon={<SubIcon size={12} />} label="Sub" />
         <Legend icon={<VarIcon size={12} />} label="VAR" />
-        <Legend icon={<BallIcon size={12} missed />} label="No goal" />
+        <Legend icon={<FootballIcon size={12} missed />} label="No goal" />
       </div>
-      <p className="mt-1 text-[10px] text-muted-foreground/80">
+      <p className="mt-1 desk-type-meta text-muted-foreground/80">
         {goals} goals · {cards} cards · {subs} substitution · shared with match momentum
       </p>
     </div>

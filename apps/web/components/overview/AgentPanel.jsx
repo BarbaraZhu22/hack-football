@@ -13,12 +13,13 @@ const MODES = [
 ];
 
 const TONE = {
-  goal: "text-emerald-600 dark:text-emerald-400",
-  "penalty-goal": "text-emerald-600 dark:text-emerald-400",
-  "penalty-missed": "text-rose-600 dark:text-rose-400",
-  yellow: "text-amber-600 dark:text-amber-400",
-  red: "text-red-600 dark:text-red-500",
-  var: "text-sky-600 dark:text-sky-500",
+  goal: "text-emerald-700",
+  "penalty-goal": "text-emerald-700",
+  "own-goal": "text-violet-700",
+  "penalty-missed": "text-rose-700",
+  yellow: "text-amber-700",
+  red: "text-destructive",
+  var: "text-sky-700",
   sub: "text-foreground/80",
   phase: "font-semibold text-foreground",
   chance: "text-foreground/80",
@@ -57,7 +58,7 @@ function ModeSwitch({ value, onChange }) {
           onClick={() => onChange(id)}
           aria-pressed={value === id}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+            "inline-flex items-center gap-1.5 rounded px-2 py-1 desk-type-meta font-medium transition-colors",
             value === id
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -71,7 +72,7 @@ function ModeSwitch({ value, onChange }) {
   );
 }
 
-export default function AgentPanel({ clock, events = [], phases = [], match }) {
+export default function AgentPanel({ events = [], phases = [], match }) {
   const [mode, setMode] = useState("live");
   const feedRef = useRef(null);
   const feed = makeFeed(events, phases).slice(-24);
@@ -83,16 +84,8 @@ export default function AgentPanel({ clock, events = [], phases = [], match }) {
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 py-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-sm">Agent</CardTitle>
-          {mode === "live" ? (
-            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
-              <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
-              {clock.label}
-            </span>
-          ) : null}
-        </div>
+      <CardHeader className="flex-row flex-nowrap items-center justify-between gap-2 space-y-0 py-2">
+        <CardTitle className="shrink-0 text-sm">Agent</CardTitle>
         <ModeSwitch value={mode} onChange={setMode} />
       </CardHeader>
 
@@ -101,10 +94,10 @@ export default function AgentPanel({ clock, events = [], phases = [], match }) {
           <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             {feed.map((entry) => (
               <div key={entry.id} className="flex gap-2 py-[3px]">
-                <span className="w-10 shrink-0 pt-px text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span className="w-10 shrink-0 pt-px text-right desk-type-meta tabular-nums text-muted-foreground">
                   {entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}
                 </span>
-                <p className={cn("min-w-0 flex-1 text-[11px] leading-4", toneOf(entry.kind))}>
+                <p className={cn("min-w-0 flex-1 text-xs leading-5", toneOf(entry.kind))}>
                   {entry.text}
                 </p>
               </div>
