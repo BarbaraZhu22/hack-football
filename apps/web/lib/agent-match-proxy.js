@@ -15,7 +15,9 @@ export function passthroughAgentResponse(response, body, extraHeaders = {}) {
   });
 }
 
-export function shouldFallbackToLocal(response, error) {
-  if (error) return true;
-  return response.status >= 500;
+export function agentUnavailableResponse(detail, status = 502) {
+  return Response.json(
+    { ok: false, detail },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
 }

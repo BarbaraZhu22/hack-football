@@ -124,7 +124,15 @@ function liveMatchSituation(frame, match, teamsByPersonId) {
   return { label, teamCode };
 }
 
-export default function LiveTrackingFrame({ frame, match, people = [], mode = "live", emptyMessage, liveEvents = [] }) {
+export default function LiveTrackingFrame({
+  frame,
+  match,
+  people = [],
+  mode = "live",
+  emptyMessage,
+  pitchEvents = [],
+  clockSeconds = null,
+}) {
   const actors = frame?.actors?.filter((actor) => actor.status === "active") || [];
   const positionsByPersonId = new Map(people.map((person) => [person.personId, person.position]));
   const namesByPersonId = new Map(people.map((person) => [person.personId, person.name]));
@@ -138,6 +146,7 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
   const actorTransitionRef = useRef(null);
   const [eventQueue, setEventQueue] = useState([]);
   const seenEventIdsRef = useRef(new Set());
+  const prevClockSecondsRef = useRef(null);
   const frameKey = frame?.frameId || frame?.timeMilliseconds;
   useEffect(() => {
     if (!frameKey) return;
@@ -150,9 +159,23 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
     previousActorPositionsRef.current = nextPositions;
   }, [frameKey]);
   useEffect(() => {
-    if (mode !== "live") return;
-    const incoming = liveEvents.filter((event) =>
-      LIVE_EVENT_TYPES.has(event.type)
+    if (mode !== "live" || clockSeconds == null) return;
+    const prev = prevClockSecondsRef.current;
+    if (prev == null) {
+      prevClockSecondsRef.current = clockSeconds;
+      return;
+    }
+    if (clockSeconds <= prev) {
+      prevClockSecondsRef.current = clockSeconds;
+      return;
+    }
+    const fromMs = prev * 1000;
+    const toMs = clockSeconds * 1000;
+    prevClockSecondsRef.current = clockSeconds;
+    const incoming = pitchEvents.filter((event) =>
+      event.timeMilliseconds > fromMs
+      && event.timeMilliseconds <= toMs
+      && LIVE_EVENT_TYPES.has(event.type)
       && event.id
       && !seenEventIdsRef.current.has(event.id)
       && liveEventPresentation(event, match, teamsByPersonId),
@@ -160,7 +183,7 @@ export default function LiveTrackingFrame({ frame, match, people = [], mode = "l
     if (!incoming.length) return;
     incoming.forEach((event) => seenEventIdsRef.current.add(event.id));
     setEventQueue((current) => [...current, ...incoming]);
-  }, [liveEvents, mode, match, teamsByPersonId]);
+  }, [clockSeconds, pitchEvents, mode, match, teamsByPersonId]);
 
   const activeEvent = mode === "live" ? eventQueue[0] || null : null;
   const activeEventPresentation = activeEvent ? liveEventPresentation(activeEvent, match, teamsByPersonId) : null;

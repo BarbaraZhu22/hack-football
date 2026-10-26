@@ -436,6 +436,8 @@ def decision_from_event(event: dict) -> dict:
     return {
         "id": f"decision-{event['id']}",
         "eventId": event["id"],
+        "timeMilliseconds": event.get("timeMilliseconds"),
+        "sequence": event.get("sequence", 0),
         "minute": event["minute"],
         "minuteLabel": event.get("minuteLabel"),
         "second": event["second"],
@@ -504,6 +506,27 @@ def _side_aggregate(events: list[dict], frames: list[dict], side: str) -> dict:
     }
 
 
+def metrics_frame_from_row(row: dict) -> dict:
+    team_code = row.get("possession_team") or ""
+    return {
+        "timeMilliseconds": int(float(row["match_ms"])),
+        "timeSeconds": float(row["match_second"]),
+        "period": int(float(row["period"])),
+        "possession": {"teamCode": team_code},
+        "ball": {"x": float(row["ball_x"])},
+    }
+
+
+def dedupe_frames_for_metrics(frames: list[dict]) -> list[dict]:
+    by_second: dict[int, dict] = {}
+    for frame in frames:
+        second = int(frame["timeSeconds"])
+        existing = by_second.get(second)
+        if not existing or frame["timeMilliseconds"] > existing["timeMilliseconds"]:
+            by_second[second] = frame
+    return [by_second[second] for second in sorted(by_second)]
+
+
 def derive_stats(events: list[dict], frames: list[dict]) -> list[dict]:
     home = _side_aggregate(events, frames, "home")
     away = _side_aggregate(events, frames, "away")
@@ -522,6 +545,128 @@ def derive_stats(events: list[dict], frames: list[dict]) -> list[dict]:
         {"label": "Fouls", "home": home["fouls"], "away": away["fouls"]},
         {"label": "Yellow cards", "home": home["yellowCards"], "away": away["yellowCards"]},
     ]
+
+
+MOMENTUM_BUCKET_SECONDS = 120
+MOMENTUM_WINDOW_SECONDS = 300
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _momentum_event_pressure(event: dict) -> float:
+    if event.get("isShot") and event.get("countInStats"):
+        return (
+            0.35
+            + _clamp(float(event.get("xg") or 0), 0, 1) * 1.6
+            + (0.35 if event.get("shotOnTarget") else 0)
+            + (0.4 if (event.get("scoreDelta") or 0) > 0 else 0)
+        )
+    if (event.get("scoreDelta") or 0) > 0:
+        return 0.75
+    if event.get("rawType") == "penalty_awarded":
+        return 0.7
+    if event.get("rawType") == "corner_awarded":
+        return 0.2
+    return 0.0
+
+
+def _create_prefix(rows: list[dict], last_second: int, fields: list[str]) -> list[dict]:
+    prefix = [{field: 0 for field in fields}]
+    for second in range(last_second + 1):
+        prior = prefix[-1]
+        row = rows[second] if second < len(rows) else {}
+        prefix.append({field: prior[field] + (row.get(field) or 0) for field in fields})
+    return prefix
+
+
+def derive_momentum(events: list[dict], frames: list[dict]) -> list[float]:
+    if not frames:
+        return []
+
+    home_code = MATCH["home"]["code"]
+    away_code = MATCH["away"]["code"]
+    last_second = int(max(frame["timeSeconds"] for frame in frames))
+    frame_rows = [
+        {"possessionHome": 0, "possessionAway": 0, "finalThirdHome": 0, "finalThirdAway": 0}
+        for _ in range(last_second + 1)
+    ]
+    for frame in frames:
+        second = int(frame["timeSeconds"])
+        if second < 0 or second > last_second:
+            continue
+        team_code = frame.get("possession", {}).get("teamCode")
+        if not team_code:
+            continue
+        row = frame_rows[second]
+        home_attacks_positive_x = frame["period"] == 1
+        ball_x = frame.get("ball", {}).get("x") or 0
+        home_progress = _clamp(
+            (ball_x if home_attacks_positive_x else -ball_x) / 52.5,
+            -1,
+            1,
+        )
+        attacking_progress = home_progress if team_code == home_code else -home_progress
+        final_third_control = _clamp((attacking_progress - 1 / 3) / (2 / 3), 0, 1)
+        if team_code == home_code:
+            row["possessionHome"] += 1
+            row["finalThirdHome"] += final_third_control
+        elif team_code == away_code:
+            row["possessionAway"] += 1
+            row["finalThirdAway"] += final_third_control
+
+    event_rows = [{"pressureHome": 0, "pressureAway": 0} for _ in range(last_second + 1)]
+    for event in events:
+        second = int(event["timeMilliseconds"] // 1000)
+        if second < 0 or second > last_second:
+            continue
+        pressure = _momentum_event_pressure(event)
+        if not pressure:
+            continue
+        team_code = event.get("teamCode") or event.get("offenderTeamCode")
+        if team_code == home_code:
+            event_rows[second]["pressureHome"] += pressure
+        elif team_code == away_code:
+            event_rows[second]["pressureAway"] += pressure
+
+    frame_fields = ["possessionHome", "possessionAway", "finalThirdHome", "finalThirdAway"]
+    event_fields = ["pressureHome", "pressureAway"]
+    frame_prefix = _create_prefix(frame_rows, last_second, frame_fields)
+    event_prefix = _create_prefix(event_rows, last_second, event_fields)
+    buckets = last_second // MOMENTUM_BUCKET_SECONDS + 1
+    raw_values: list[float] = []
+
+    for bucket in range(buckets):
+        end = min((bucket + 1) * MOMENTUM_BUCKET_SECONDS, last_second + 1)
+        start = max(0, end - MOMENTUM_WINDOW_SECONDS)
+        frame_start = frame_prefix[start]
+        frame_end = frame_prefix[end]
+        event_start = event_prefix[start]
+        event_end = event_prefix[end]
+
+        possession_home = frame_end["possessionHome"] - frame_start["possessionHome"]
+        possession_away = frame_end["possessionAway"] - frame_start["possessionAway"]
+        frame_count = possession_home + possession_away
+        final_third_home = frame_end["finalThirdHome"] - frame_start["finalThirdHome"]
+        final_third_away = frame_end["finalThirdAway"] - frame_start["finalThirdAway"]
+        pressure_home = event_end["pressureHome"] - event_start["pressureHome"]
+        pressure_away = event_end["pressureAway"] - event_start["pressureAway"]
+
+        possession_edge = (possession_home - possession_away) / frame_count if frame_count else 0
+        territory_edge = (final_third_home - final_third_away) / frame_count if frame_count else 0
+        pressure_edge = (pressure_home - pressure_away) / (pressure_home + pressure_away + 2)
+        raw_values.append(
+            _clamp(0.2 * possession_edge + 0.25 * territory_edge + 0.55 * pressure_edge, -1, 1),
+        )
+
+    result: list[float] = []
+    for index, value in enumerate(raw_values):
+        previous = raw_values[index - 1] if index > 0 else value
+        two_back = raw_values[index - 2] if index > 1 else previous
+        smoothed = _clamp(value * 0.6 + previous * 0.28 + two_back * 0.12, -1, 1)
+        result.append(round(smoothed, 2))
+    return result
 
 
 def create_mock_momentum(frames: list[dict]) -> list[float]:

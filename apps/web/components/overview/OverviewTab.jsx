@@ -29,12 +29,23 @@ const TIMELINE_TABS = [
   { id: "events", label: "Events" },
 ];
 
-const INITIAL_CLOCK = { seconds: 78 * 60 + 32, minute: 78, second: 32, label: "78:32", finished: false };
-
 function mergeById(current, incoming = []) {
   if (!incoming.length) return current;
   const seen = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => !seen.has(item.id))];
+}
+
+function withinClock(items, clock) {
+  const atMs = Math.max(0, Number(clock?.seconds) || 0) * 1000;
+  return items.filter((item) => (item.timeMilliseconds ?? 0) <= atMs);
+}
+
+function sortDecisions(items) {
+  return [...items].sort(
+    (left, right) =>
+      (left.timeMilliseconds ?? 0) - (right.timeMilliseconds ?? 0)
+      || (left.sequence ?? 0) - (right.sequence ?? 0),
+  );
 }
 
 function LiveClock({ clock, connection }) {
@@ -45,6 +56,15 @@ function LiveClock({ clock, connection }) {
       : connection === "offline"
         ? "Offline"
         : "Connecting";
+  if (!clock?.label) {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1">
+        <span className="desk-type-meta font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </span>
+      </span>
+    );
+  }
   return (
     <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1">
       <span className={cn("size-1.5 rounded-full bg-primary", connection === "live" ? "animate-pulse" : "")} />
@@ -493,44 +513,42 @@ function TabSwitch({ value, onChange, options }) {
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
   const [snapshot, setSnapshot] = useState(null);
-  const [clock, setClock] = useState(INITIAL_CLOCK);
+  const [clock, setClock] = useState(null);
   const [connection, setConnection] = useState("connecting");
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
-  const [liveEvents, setLiveEvents] = useState([]);
-  const framesRef = useRef([]);
+  const receivedTickRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     let stream;
+    receivedTickRef.current = false;
 
     async function connect() {
       try {
-        const response = await fetch("/api/match?through=78:32", { cache: "no-store" });
+        const response = await fetch("/api/match", { cache: "no-store" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Match API request failed.");
         if (cancelled) return;
 
         setSnapshot(data);
         setClock(data.clock);
-        framesRef.current = data.frames || [];
-        setCurrentFrame(framesRef.current.at(-1) || null);
+        setCurrentFrame(data.frame ?? null);
         setConnection(data.clock.finished ? "finished" : "connecting");
         if (data.clock.finished) return;
 
         stream = new EventSource("/api/match/stream?after=" + encodeURIComponent(data.cursor));
-        stream.onopen = () => {
-          if (!cancelled) setConnection("live");
-        };
         stream.onerror = () => {
-          if (!cancelled) setConnection("reconnecting");
+          if (!cancelled) {
+            setConnection(receivedTickRef.current ? "reconnecting" : "connecting");
+          }
         };
         stream.addEventListener("tick", (message) => {
           if (cancelled) return;
           const tick = JSON.parse(message.data);
-          setLiveEvents(tick.events || []);
+          receivedTickRef.current = true;
+          setConnection("live");
           if (tick.frame) {
-            framesRef.current.push(tick.frame);
             setCurrentFrame(tick.frame);
           }
           setClock(tick.clock);
@@ -568,9 +586,10 @@ export default function OverviewTab() {
 
   const matchData = snapshot || {};
   const match = matchData.match || MATCH;
-  const events = matchData.events || [];
-  const timelineEvents = matchData.timelineEvents || [];
-  const decisions = matchData.decisions || [];
+  const events = withinClock(matchData.events || [], clock);
+  const timelineEvents = withinClock(matchData.timelineEvents || [], clock);
+  const decisions = sortDecisions(withinClock(matchData.decisions || [], clock));
+  const phases = withinClock(matchData.phases || [], clock);
   const controversialDecisionIds = new Set();
   const reviewedIncidentIds = new Set();
   for (const decision of decisions) {
@@ -579,13 +598,12 @@ export default function OverviewTab() {
     reviewedIncidentIds.add(incident.id);
     controversialDecisionIds.add(decision.id);
   }
-  const phases = matchData.phases || [];
   const statRows = matchData.stats || [];
   const momentum = matchData.momentum || [];
   const lineupPlayers = buildLineup(matchData.people || [], currentFrame);
   const lineupIds = new Set(lineupPlayers.map((player) => player.personId).filter(Boolean));
   const latestRatings = new Map();
-  const lineupSecond = currentFrame?.timeSeconds ?? Number.MAX_SAFE_INTEGER;
+  const lineupSecond = clock?.seconds ?? Number.MAX_SAFE_INTEGER;
   const ratingRows = matchData.ratings || [];
   for (let index = ratingRows.length - 1; index >= 0 && latestRatings.size < lineupIds.size; index -= 1) {
     const rating = ratingRows[index];
@@ -628,9 +646,7 @@ export default function OverviewTab() {
             {apiError
               ? "Match data unavailable"
               : snapshot?.dataSource?.ok
-                ? snapshot.dataSource.backend === "local-csv"
-                  ? "Local CSV · live replay"
-                  : "Match data · PostgreSQL connected"
+                ? "Match data · PostgreSQL"
                 : snapshot
                   ? "Match data connected"
                   : "Loading match data…"}
@@ -647,7 +663,7 @@ export default function OverviewTab() {
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col py-2">
             {timeline === "decisions" ? (
-              <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
+              <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
                 {decisions.map((decision) => (
                   <DecisionRow
@@ -684,7 +700,13 @@ export default function OverviewTab() {
         </Card>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <LiveTrackingFrame frame={currentFrame} match={match} people={matchData.people || []} liveEvents={liveEvents} />
+          <LiveTrackingFrame
+            frame={currentFrame}
+            match={match}
+            people={matchData.people || []}
+            pitchEvents={events}
+            clockSeconds={clock?.seconds ?? null}
+          />
           <div className="flex min-h-0 flex-1 flex-col">
             <AgentPanel events={events} phases={phases} match={match} />
           </div>
@@ -694,7 +716,7 @@ export default function OverviewTab() {
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">
             <div>
               <CardTitle className="text-sm">Match stats</CardTitle>
-              <p className="mt-0.5 desk-type-meta text-muted-foreground">Local CSV · recalculated with the live clock.</p>
+              <p className="mt-0.5 desk-type-meta text-muted-foreground">Stats and momentum update with the live clock.</p>
             </div>
             <div className="flex items-center gap-2.5 desk-type-meta text-muted-foreground">
               <span className="inline-flex items-center gap-1">
