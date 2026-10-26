@@ -153,7 +153,9 @@ Implementation: CSS variables in `globals.css`; labels and ids in `lib/themes.js
 
 ### 5.1 Call chain
 
-Browser → Next.js `POST /api/chat` or `GET /api/match` → FastAPI (`AGENT_URL`, server-side only) → Microsoft agent adapter.
+Browser → Next.js `POST /api/chat` → FastAPI (`AGENT_URL`, server-side only) → Microsoft agent adapter.
+
+The Match overview loads its initial data from `GET /api/match` and live updates from `GET /api/match/stream` (Server-Sent Events). The routes use the CSV mock by default and proxy to configured match-data endpoints when `MATCH_API_URL` and `MATCH_STREAM_API_URL` are set.
 
 ### 5.2 Contract
 
@@ -220,7 +222,7 @@ Supported action types (extending the list requires updating `contracts/agent.js
 
 ### Match
 
-- Load match / service status via `/api/match` (proxied to FastAPI).
+- Load its initial snapshot via `/api/match` and live updates via `/api/match/stream`.
 - Match-specific cards and lists in `components/match/`.
 
 ### Tactics
@@ -244,7 +246,10 @@ When adding a new atom, place it under `components/ui/` and compose it from tab 
 
 | Variable | Where | Purpose |
 |----------|--------|---------|
-| `AGENT_URL` | Next.js server | Base URL for FastAPI (default `http://127.0.0.1:8088`) |
+| `AGENT_URL` | Next.js server | Base URL for FastAPI chat (default `http://127.0.0.1:8088`) |
+| `MATCH_API_URL` | Next.js server | Full URL for the match snapshot API; omit to use the local CSV mock |
+| `MATCH_STREAM_API_URL` | Next.js server | Full URL for the match SSE endpoint; configure with `MATCH_API_URL` for real live data |
+| `MOCK_MATCH_TICK_MS` | Next.js server | Local mock replay interval in milliseconds (default `1000`) |
 | `FOUNDRY_PROJECT_ENDPOINT` | `apps/agent` (local `.env` or Container App env) | Foundry **Project endpoint** from the portal (`.../api/projects/...`) |
 | `FOUNDRY_API_KEY` | `apps/agent` (optional but recommended on Container Apps) | Project **API key** from the same portal page; when set, no browser/`az login` |
 | `FOUNDRY_MODEL` | `apps/agent` | Deployment name (e.g. `DeepSeek-V4.1-Flash`) |

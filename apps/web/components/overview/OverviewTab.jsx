@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Whistle } from "lucide-react";
 
@@ -8,7 +8,7 @@ import AgentPanel from "@/components/overview/AgentPanel";
 import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventTimeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MATCH } from "@/lib/incident";
-import { getIncident, MATCH_DECISIONS, MATCH_EVENTS, RATINGS } from "@/lib/incidents";
+import { getIncident, RATINGS } from "@/lib/incidents";
 import { cn } from "@/lib/utils";
 
 const AXIS_MINUTES = 95;
@@ -25,123 +25,109 @@ const TIMELINE_TABS = [
   { id: "events", label: "Events" },
 ];
 
-// The match is in play at MATCH.clock; the desk runs it forward one second at
-// a time so the header clock and the commentary feed share the same source.
-const CLOCK_START_SECONDS = 78 * 60 + 32;
+const INITIAL_CLOCK = { seconds: 78 * 60 + 32, minute: 78, second: 32, label: "78:32", finished: false };
 
-function useMatchClock() {
-  const [seconds, setSeconds] = useState(CLOCK_START_SECONDS);
-
-  useEffect(() => {
-    const id = setInterval(() => setSeconds((value) => value + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const minute = Math.floor(seconds / 60);
-  const second = seconds % 60;
-  return {
-    minute,
-    second,
-    label: `${minute}:${String(second).padStart(2, "0")}`,
-  };
+function mergeById(current, incoming = []) {
+  if (!incoming.length) return current;
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...incoming.filter((item) => !seen.has(item.id))];
 }
 
-function LiveClock({ clock }) {
+function LiveClock({ clock, connection }) {
+  const label = connection === "live"
+    ? "Live"
+    : connection === "finished"
+      ? "Full time"
+      : connection === "offline"
+        ? "Offline"
+        : "Connecting";
   return (
     <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1">
-      <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
+      <span className={cn("size-1.5 rounded-full bg-red-500", connection === "live" ? "animate-pulse" : "")} />
       <span className="font-mono text-sm font-bold tabular-nums tracking-tight text-red-600 dark:text-red-400">
         {clock.label}
       </span>
       <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-red-600/80 dark:text-red-400/80">
-        Live
+        {label}
       </span>
     </span>
   );
 }
 
-const STAT_ROWS = [
-  { label: "Possession", home: 58, away: 42, unit: "%" },
-  { label: "Shots", home: 14, away: 9 },
-  { label: "Shots on target", home: 5, away: 3 },
-  { label: "Big chances", home: 4, away: 2 },
-  { label: "Expected goals", home: 1.84, away: 1.12 },
-  { label: "Passes", home: 612, away: 487 },
-  { label: "Pass accuracy", home: 87, away: 81, unit: "%" },
-  { label: "Duels won", home: 54, away: 46 },
-  { label: "Corners", home: 7, away: 4 },
-  { label: "Offsides", home: 2, away: 1 },
-  { label: "Saves", home: 3, away: 5 },
-  { label: "Fouls", home: 11, away: 14 },
-  { label: "Yellow cards", home: 2, away: 3 },
-];
+const LINEUP_X = {
+  GK: [50],
+  RB: [13],
+  CB: [37, 63],
+  LB: [87],
+  CM: [24, 76],
+  CDM: [50],
+  LW: [17],
+  ST: [50],
+  RW: [83],
+};
 
-// One pitch, two teams stacked: away on top, home at the bottom.
-// Positions are computed so no two labels overlap: rows are staggered in x
-// (GK/DEF use 13-37-63-87, MID 24-50-76, FWD 17-50-83) and rows that share an
-// x value keep at least 14% vertical separation, which exceeds the label
-// stack height on the taller 2:3 pitch.
-const LINEUP_PLAYERS = [
-  { team: "away", number: 22, name: "Raya", rating: 7.0, x: 50, y: 8 },
-  { team: "away", number: 4, name: "White", rating: 6.7, x: 13, y: 18 },
-  { team: "away", number: 2, name: "Saliba", rating: 7.3, x: 37, y: 18 },
-  { team: "away", number: 6, name: "Gabriel", rating: 7.2, x: 63, y: 18 },
-  { team: "away", number: 35, name: "Zinchenko", rating: 6.6, x: 87, y: 18 },
-  { team: "away", number: 8, name: "Odegaard", rating: 7.6, x: 24, y: 29 },
-  { team: "away", number: 41, name: "Rice", rating: 7.4, x: 50, y: 29 },
-  { team: "away", number: 5, name: "Partey", rating: 6.8, x: 76, y: 29 },
-  { team: "away", number: 7, name: "Saka", rating: 7.7, x: 17, y: 43 },
-  { team: "away", number: 9, name: "Jesus", rating: 7.0, x: 50, y: 43 },
-  { team: "away", number: 11, name: "Martinelli", rating: 6.9, x: 83, y: 43 },
-  { team: "home", number: 20, name: "B. Silva", rating: 7.5, x: 17, y: 58 },
-  { team: "home", number: 9, name: "Haaland", rating: 7.9, x: 50, y: 58 },
-  { team: "home", number: 47, name: "Foden", rating: 8.3, x: 83, y: 58 },
-  { team: "home", number: 17, name: "De Bruyne", rating: 8.1, x: 24, y: 72 },
-  { team: "home", number: 16, name: "Rodri", rating: 7.8, x: 50, y: 72 },
-  { team: "home", number: 19, name: "Gundogan", rating: 7.2, x: 76, y: 72 },
-  { team: "home", number: 2, name: "Walker", rating: 6.8, x: 13, y: 83 },
-  { team: "home", number: 3, name: "Dias", rating: 7.4, x: 37, y: 83 },
-  { team: "home", number: 25, name: "Akanji", rating: 7.0, x: 63, y: 83 },
-  { team: "home", number: 24, name: "Gvardiol", rating: 6.9, x: 87, y: 83 },
-  { team: "home", number: 31, name: "Ederson", rating: 7.1, x: 50, y: 92 },
-];
+function buildLineup(people = [], frame = null) {
+  const peopleById = new Map(people.filter((person) => person.personId).map((person) => [person.personId, person]));
+  const livePlayers = frame?.actors
+    ?.filter((actor) => actor.team && actor.status === "active")
+    .map((actor) => {
+      const person = peopleById.get(actor.personId);
+      if (!person) return null;
+      return {
+        personId: person.personId,
+        team: person.team,
+        number: person.number,
+        name: person.name,
+        position: person.position,
+        x: Math.max(3, Math.min(97, ((actor.y + 34) / 68) * 100)),
+        y: Math.max(3, Math.min(97, ((52.5 - actor.x) / 105) * 100)),
+      };
+    })
+    .filter(Boolean);
+  if (livePlayers?.length) return livePlayers;
 
-const teamColor = (team) => (team === "home" ? MATCH.home.color : MATCH.away.color);
+  const slots = new Map();
+  return people
+    .filter((person) => person.squadRole === "start" && person.team)
+    .map((person) => {
+      const key = person.team + "-" + person.position;
+      const index = slots.get(key) || 0;
+      slots.set(key, index + 1);
+      const isHome = person.team === "home";
+      const position = person.position;
+      const y = position === "GK"
+        ? (isHome ? 92 : 8)
+        : ["RB", "CB", "LB"].includes(position)
+          ? (isHome ? 83 : 18)
+          : ["CM", "CDM"].includes(position)
+            ? (isHome ? 72 : 29)
+            : (isHome ? 58 : 43);
+      return { personId: person.personId, team: person.team, number: person.number, name: person.name, position, x: LINEUP_X[position]?.[index] ?? 50, y };
+    });
+}
 
-// Deterministic placeholder momentum: 2-minute segments, home positive,
-// with spikes around goals and a dip on the red card.
-const MOMENTUM = (() => {
-  let seed = 20260929;
-  const rand = () => {
-    seed = (seed * 16807) % 2147483647;
-    return (seed - 1) / 2147483646;
-  };
-  return Array.from({ length: 46 }, (_, index) => {
-    const minute = index * 2;
-    const base = rand() * 1.5 - 0.75 + 0.16;
-    let boost = 0;
-    for (const event of MATCH_EVENTS) {
-      if (minute < event.minute || minute > event.minute + 3) continue;
-      if (event.type === "goal" || event.type === "penalty-goal") {
-        boost += event.team === "home" ? 0.55 : -0.55;
-      } else if (event.type === "red") {
-        boost += event.team === "home" ? -0.3 : 0.3;
-      }
-    }
-    return Math.max(-1, Math.min(1, base + boost));
-  });
-})();
+const teamColor = (team, match) => (team === "home" ? match.home.color : match.away.color);
+
+function playerRatingColor(rating) {
+  if (rating < 6) return "#ef4444";
+  if (rating < 6.5) return "#f97316";
+  if (rating < 7) return "#eab308";
+  return "#22c55e";
+}
 
 function formatStat(value, unit) {
   return unit ? `${value}${unit}` : String(value);
 }
 
 function DecisionRow({ decision }) {
-  const rating = RATINGS[decision.rating];
+  const rating = {
+    correct: RATINGS.green,
+    questionable: RATINGS.amber,
+    controversial: RATINGS.red,
+  }[decision.type] || RATINGS.green;
   const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
   const reconstructed = incident?.status === "active";
-  // Every decision is stamped in minutes only, so the two timelines read alike.
-  const minuteLabel = `${decision.minute}'`;
+  const minuteLabel = (decision.minuteLabel || decision.minute) + "'";
 
   const body = (
     <div className="relative flex gap-2 py-0.5">
@@ -168,8 +154,12 @@ function DecisionRow({ decision }) {
           ) : null}
         </div>
         <p className="mt-0.5 truncate text-[11px] leading-4 text-muted-foreground">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">{decision.meta}</span>
-          {decision.meta ? " · " : ""}
+          {decision.meta ? (
+            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+              {decision.meta}
+            </span>
+          ) : null}
+          {decision.meta && decision.detail ? " · " : ""}
           {decision.detail}
         </p>
       </div>
@@ -186,10 +176,10 @@ function DecisionRow({ decision }) {
   return <div className="px-1">{body}</div>;
 }
 
-function StatBarRow({ row }) {
+function StatBarRow({ row, match }) {
   const homeLeads = row.home >= row.away;
-  const share = homeLeads ? row.home / (row.home + row.away) : row.away / (row.home + row.away);
-  const color = homeLeads ? MATCH.home.color : MATCH.away.color;
+  const share = (homeLeads ? row.home : row.away) / Math.max(1, row.home + row.away);
+  const color = homeLeads ? match.home.color : match.away.color;
   return (
     <div className="py-0.5">
       <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -252,8 +242,8 @@ function VarIcon() {
   );
 }
 
-function EventIcon({ event }) {
-  const color = teamColor(event.team);
+function EventIcon({ event, match }) {
+  const color = teamColor(event.team, match);
   const left = (event.minute / AXIS_MINUTES) * 100;
   let icon = null;
   if (event.type === "goal") icon = <BallIcon />;
@@ -275,7 +265,7 @@ function EventIcon({ event }) {
   if (event.incidentId) {
     return (
       <Link
-        href={`/pitch?incident=${event.incidentId}`}
+      href={"/pitch?incident=" + event.incidentId}
         className="absolute top-0 -translate-x-1/2 transition hover:scale-125"
         style={{ left: `${left}%` }}
         title={`${event.minute}' ${event.label}`}
@@ -287,9 +277,10 @@ function EventIcon({ event }) {
   return marker;
 }
 
-function MomentumChart() {
-  const homeEvents = MATCH_EVENTS.filter((event) => event.team === "home");
-  const awayEvents = MATCH_EVENTS.filter((event) => event.team === "away");
+function MomentumChart({ match, events, values }) {
+  const homeEvents = events.filter((event) => event.team === "home");
+  const awayEvents = events.filter((event) => event.team === "away");
+  const momentum = values;
   return (
     <div className="min-w-0">
       <div className="flex items-center justify-between text-xs">
@@ -299,31 +290,31 @@ function MomentumChart() {
       <div className="relative mt-2.5">
         <div className="relative h-3.5">
           {homeEvents.map((event) => (
-            <EventIcon key={`${event.type}-${event.minute}`} event={event} />
+            <EventIcon key={event.id} event={event} match={match} />
           ))}
         </div>
         <div className="relative flex h-[76px] overflow-hidden rounded-md border">
-          <div className="absolute inset-x-0 top-0 h-1/2" style={{ backgroundColor: `${MATCH.home.color}14` }} />
-          <div className="absolute inset-x-0 bottom-0 h-1/2" style={{ backgroundColor: `${MATCH.away.color}14` }} />
+          <div className="absolute inset-x-0 top-0 h-1/2" style={{ backgroundColor: match.home.color + "14" }} />
+          <div className="absolute inset-x-0 bottom-0 h-1/2" style={{ backgroundColor: match.away.color + "14" }} />
           <div className="absolute inset-x-0 top-0 flex h-1/2 items-end gap-px px-1">
-            {MOMENTUM.map((value, index) => (
-              <div key={`up-${index}`} className="flex h-full flex-1 items-end justify-center">
+            {momentum.map((value, index) => (
+              <div key={"up-" + index} className="flex h-full flex-1 items-end justify-center">
                 {value >= 0 ? (
                   <div
                     className="w-full max-w-[7px] rounded-t-sm"
-                    style={{ height: `${Math.max(6, value * 100)}%`, backgroundColor: MATCH.home.color }}
+                    style={{ height: `${Math.max(6, value * 100)}%`, backgroundColor: match.home.color }}
                   />
                 ) : null}
               </div>
             ))}
           </div>
           <div className="absolute inset-x-0 bottom-0 flex h-1/2 items-start gap-px border-t border-border/70 px-1">
-            {MOMENTUM.map((value, index) => (
-              <div key={`down-${index}`} className="flex h-full flex-1 items-start justify-center">
+            {momentum.map((value, index) => (
+              <div key={"down-" + index} className="flex h-full flex-1 items-start justify-center">
                 {value < 0 ? (
                   <div
                     className="w-full max-w-[7px] rounded-b-sm"
-                    style={{ height: `${Math.max(6, -value * 100)}%`, backgroundColor: MATCH.away.color }}
+                    style={{ height: `${Math.max(6, -value * 100)}%`, backgroundColor: match.away.color }}
                   />
                 ) : null}
               </div>
@@ -334,17 +325,17 @@ function MomentumChart() {
             style={{ left: `${(HALFTIME / AXIS_MINUTES) * 100}%` }}
           />
           <span className="absolute left-1.5 top-1 flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 text-[9px] font-semibold">
-            <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.home.color }} />
-            {MATCH.home.code}
+            <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
+            {match.home.code}
           </span>
           <span className="absolute bottom-1 left-1.5 flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 text-[9px] font-semibold">
-            <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.away.color }} />
-            {MATCH.away.code}
+            <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
+            {match.away.code}
           </span>
         </div>
         <div className="relative h-3.5">
           {awayEvents.map((event) => (
-            <EventIcon key={`${event.type}-${event.minute}`} event={event} />
+            <EventIcon key={event.id} event={event} match={match} />
           ))}
         </div>
         <div className="mt-0.5 flex items-center justify-between font-mono text-[10px] text-muted-foreground">
@@ -357,12 +348,12 @@ function MomentumChart() {
   );
 }
 
-function LineupPitch() {
+function LineupPitch({ match, players }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium">Lineups</span>
-        <span className="text-muted-foreground">Simulated</span>
+        <span className="text-muted-foreground">Rating / 10</span>
       </div>
       <div
         className="relative mt-1.5 aspect-[2/3] overflow-hidden rounded-lg border"
@@ -375,34 +366,46 @@ function LineupPitch() {
         <div className="absolute left-1/2 top-1.5 h-[6%] w-[18%] -translate-x-1/2 border-x border-b border-white/35" />
         <div className="absolute left-1/2 bottom-1.5 h-[13%] w-[42%] -translate-x-1/2 border-x border-t border-white/35" />
         <div className="absolute left-1/2 bottom-1.5 h-[6%] w-[18%] -translate-x-1/2 border-x border-t border-white/35" />
-        {LINEUP_PLAYERS.map((player) => (
-          <div
-            key={`${player.team}-${player.number}`}
-            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
-            style={{ left: `${player.x}%`, top: `${player.y}%` }}
-            title={`${player.name} - rating ${player.rating.toFixed(1)} (simulated)`}
-          >
-            <span
-              className="grid size-5 place-items-center rounded-full border-2 text-[9px] font-bold text-white"
-              style={{ backgroundColor: teamColor(player.team), borderColor: "rgba(255,255,255,0.9)" }}
+        {players.map((player) => {
+          const hasRating = Number.isFinite(player.rating);
+          const ratingLabel = hasRating ? ` · Rating ${player.rating.toFixed(1)}/10` : "";
+          const changeLabel = player.ratingDelta ? ` (${player.ratingDelta > 0 ? "+" : ""}${player.ratingDelta.toFixed(2)})` : "";
+          return (
+            <div
+              key={`${player.team}-${player.number}`}
+              className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+              style={{ left: `${player.x}%`, top: `${player.y}%` }}
+              title={player.name + " · " + player.position + ratingLabel + changeLabel}
             >
-              {player.number}
-            </span>
-            <span className="mt-px whitespace-nowrap text-[9px] font-medium leading-none text-white/95">{player.name}</span>
-            <span className="mt-px rounded bg-black/60 px-1 font-mono text-[9px] leading-none text-amber-300">
-              {player.rating.toFixed(1)}
-            </span>
-          </div>
-        ))}
+              <span
+                className="grid size-5 place-items-center rounded-full border-2 text-[9px] font-bold text-white"
+                style={{ backgroundColor: teamColor(player.team, match), borderColor: "rgba(255,255,255,0.9)" }}
+              >
+                {player.number}
+              </span>
+              {hasRating ? (
+                <span
+                  className="-mt-0.5 grid h-[11px] min-w-[20px] place-items-center rounded-[2px] px-0.5 font-mono text-[7px] font-bold leading-none text-white shadow-sm"
+                  style={{ backgroundColor: playerRatingColor(player.rating) }}
+                >
+                  {player.rating.toFixed(1)}
+                </span>
+              ) : null}
+              <span className="mt-0.5 whitespace-nowrap text-[9px] font-medium leading-none text-white/95">
+                {player.name}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <div className="mt-1.5 flex gap-4 text-[10px] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
-          <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.away.color }} />
-          {MATCH.away.code} 4-3-3
+          <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
+          {match.away.code} 4-3-3
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.home.color }} />
-          {MATCH.home.code} 4-3-3
+          <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
+          {match.home.code} 4-3-3
         </span>
       </div>
     </div>
@@ -432,22 +435,157 @@ function TabSwitch({ value, onChange, options }) {
   );
 }
 
-function PlaybackFrame() {
+function PlaybackFrame({ frame, match, people = [] }) {
+  const actors = frame?.actors?.filter((actor) => actor.status === "active") || [];
+  const positionsByPersonId = new Map(people.map((person) => [person.personId, person.position]));
+  const [animatedBall, setAnimatedBall] = useState(frame?.ball || null);
+  const ballPositionRef = useRef(null);
+  const displayedFrameRef = useRef(null);
+  useEffect(() => {
+    if (!frame?.ball) return undefined;
+    const frameKey = frame.frameId || frame.timeMilliseconds;
+    if (frameKey === displayedFrameRef.current) return undefined;
+    displayedFrameRef.current = frameKey;
+
+    const target = { x: frame.ball.x, y: frame.ball.y };
+    const from = ballPositionRef.current;
+    if (!from) {
+      ballPositionRef.current = target;
+      setAnimatedBall(target);
+      return undefined;
+    }
+
+    const dx = target.x - from.x;
+    const dy = target.y - from.y;
+    const span = Math.hypot(dx, dy);
+    const bend = Math.min(1.8, span * 0.045) * (frame.possession?.teamCode === match.home.code ? 1 : -1);
+    const control = span > 0
+      ? { x: (from.x + target.x) / 2 - (dy / span) * bend, y: (from.y + target.y) / 2 + (dx / span) * bend }
+      : target;
+    const startedAt = performance.now();
+    const duration = 900;
+    let animationFrame = 0;
+    const animate = (now) => {
+      const progress = Math.max(0, Math.min(1, (now - startedAt) / duration));
+      const inverse = 1 - progress;
+      const position = {
+        x: inverse * inverse * from.x + 2 * inverse * progress * control.x + progress * progress * target.x,
+        y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * target.y,
+      };
+      ballPositionRef.current = position;
+      setAnimatedBall(position);
+      if (progress < 1) animationFrame = requestAnimationFrame(animate);
+    };
+    animationFrame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [frame?.frameId, frame?.timeMilliseconds, frame?.ball?.x, frame?.ball?.y, frame?.possession?.teamCode, match.home.code]);
+  const viewWidth = 111;
+  const viewHeight = 68;
+  const pitchWidthRatio = (viewWidth / viewHeight) / (16 / 9);
+  const pitchSideGutter = (1 - pitchWidthRatio) / 2;
+  const point = (x, y) => ({
+    left: `${(pitchSideGutter + ((x + 55.5) / viewWidth) * pitchWidthRatio) * 100}%`,
+    top: `${Math.max(1, Math.min(99, ((y + 34) / 68) * 100))}%`,
+  });
   return (
     <Card className="shrink-0 overflow-hidden">
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
-        <CardTitle className="text-sm">3D live playback</CardTitle>
-        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <CardTitle className="text-sm">Live tracking</CardTitle>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
           <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
-          Live
+          {frame?.clockLabel || "Waiting for frame"}
         </span>
       </CardHeader>
       <CardContent className="py-2">
-        {/* Reserved for the real-time 3D playback surface - intentionally blank. */}
-        <div
-          className="aspect-video w-full rounded-lg border bg-muted/30"
-          aria-label="3D live playback window"
-        />
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-emerald-800" aria-label="Live player and ball tracking frame">
+          <svg
+            className="absolute inset-0 size-full"
+            viewBox="-3 0 111 68"
+            preserveAspectRatio="xMidYMid meet"
+            aria-hidden="true"
+          >
+            <g fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="0.28">
+              <rect x="0.85" y="0.85" width="103.3" height="66.3" />
+              <line x1="52.5" y1="0.85" x2="52.5" y2="67.15" />
+              <circle cx="52.5" cy="34" r="9.15" />
+              <rect x="0.85" y="13.84" width="16.5" height="40.32" />
+              <rect x="87.65" y="13.84" width="16.5" height="40.32" />
+              <rect x="0.85" y="24.84" width="5.5" height="18.32" />
+              <rect x="98.65" y="24.84" width="5.5" height="18.32" />
+              <path d="M 17.35 26.69 A 9.15 9.15 0 0 1 17.35 41.31" />
+              <path d="M 87.65 26.69 A 9.15 9.15 0 0 0 87.65 41.31" />
+              <path d="M 0.85 1.85 A 1 1 0 0 0 1.85 0.85" />
+              <path d="M 103.15 0.85 A 1 1 0 0 0 104.15 1.85" />
+              <path d="M 0.85 66.15 A 1 1 0 0 1 1.85 67.15" />
+              <path d="M 103.15 67.15 A 1 1 0 0 1 104.15 66.15" />
+              <rect x="-1.59" y="30.34" width="2.44" height="7.32" />
+              <rect x="104.15" y="30.34" width="2.44" height="7.32" />
+            </g>
+            <g fill="rgba(255,255,255,0.82)">
+              <circle cx="52.5" cy="34" r="0.24" />
+              <circle cx="11.85" cy="34" r="0.24" />
+              <circle cx="93.15" cy="34" r="0.24" />
+            </g>
+          </svg>
+          {actors.map((actor) => {
+            const isOfficial = !actor.team;
+            const isGoalkeeper = positionsByPersonId.get(actor.person_id || actor.personId) === "GK";
+            const color = isOfficial
+              ? "#facc15"
+              : actor.team === "MCI"
+                ? match.home.color
+                : match.away.color;
+            const roleLabel = actor.role === "main"
+              ? "Referee"
+              : actor.role === "ar1"
+                ? "Assistant referee 1"
+                : actor.role === "ar2"
+                  ? "Assistant referee 2"
+                  : `${actor.team} #${actor.no}`;
+            const positionStyle = {
+              ...point(actor.x, actor.y),
+              transition: "left 1000ms linear, top 1000ms linear",
+              willChange: "left, top",
+            };
+            return isGoalkeeper ? (
+              <svg
+                key={actor.person_id || actor.personId || actor.role}
+                viewBox="0 0 12 12"
+                className="absolute z-10 size-3 -translate-x-1/2 -translate-y-1/2 drop-shadow-sm"
+                style={positionStyle}
+                role="img"
+                aria-label={roleLabel}
+                title={roleLabel}
+              >
+                <path d="M6 0.8 11.2 11H0.8Z" fill={color} stroke="white" strokeWidth="1.2" />
+              </svg>
+            ) : (
+              <span
+                key={actor.person_id || actor.personId || actor.role}
+                className={`absolute z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-sm ${isOfficial ? "border-amber-100" : "border-white"}`}
+                style={{ ...positionStyle, backgroundColor: color }}
+                title={roleLabel}
+              />
+            );
+          })}
+          {animatedBall ? (
+            <svg
+              viewBox="0 0 20 20"
+              className="absolute z-20 size-3.5 -translate-x-1/2 -translate-y-1/2 drop-shadow"
+              style={{
+                ...point(animatedBall.x, animatedBall.y),
+                willChange: "left, top",
+              }}
+              role="img"
+              aria-label="Ball"
+              title="Ball"
+            >
+              <circle cx="10" cy="10" r="8.5" fill="white" stroke="#172018" strokeWidth="1.2" />
+              <path d="m10 5.8 3.4 2.5-1.3 4h-4.2l-1.3-4z" fill="#172018" />
+              <path d="m6.6 8.3-2.7-.9M13.4 8.3l2.7-.9M7.9 12.3l-1.5 2.4M12.1 12.3l1.5 2.4M10 5.8V2.3" fill="none" stroke="#172018" strokeWidth="1.1" />
+            </svg>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );
@@ -455,33 +593,138 @@ function PlaybackFrame() {
 
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
-  const clock = useMatchClock();
+  const [snapshot, setSnapshot] = useState(null);
+  const [clock, setClock] = useState(INITIAL_CLOCK);
+  const [connection, setConnection] = useState("connecting");
+  const [apiError, setApiError] = useState("");
+  const [currentFrame, setCurrentFrame] = useState(null);
+  const framesRef = useRef([]);
 
-  const counts = MATCH_DECISIONS.reduce((acc, decision) => {
-    acc[decision.rating] += 1;
-    return acc;
-  }, { green: 0, amber: 0, red: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    let stream;
+
+    async function connect() {
+      try {
+        const response = await fetch("/api/match?through=78:32", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Match API request failed.");
+        if (cancelled) return;
+
+        setSnapshot(data);
+        setClock(data.clock);
+        framesRef.current = data.frames || [];
+        setCurrentFrame(framesRef.current.at(-1) || null);
+        setConnection(data.clock.finished ? "finished" : "connecting");
+        if (data.clock.finished) return;
+
+        stream = new EventSource("/api/match/stream?after=" + encodeURIComponent(data.cursor));
+        stream.onopen = () => {
+          if (!cancelled) setConnection("live");
+        };
+        stream.onerror = () => {
+          if (!cancelled) setConnection("reconnecting");
+        };
+        stream.addEventListener("tick", (message) => {
+          if (cancelled) return;
+          const tick = JSON.parse(message.data);
+          if (tick.frame) {
+            framesRef.current.push(tick.frame);
+            setCurrentFrame(tick.frame);
+          }
+          setClock(tick.clock);
+          setSnapshot((current) => current ? {
+            ...current,
+            match: tick.match || current.match,
+            stats: tick.stats || current.stats,
+            cursor: tick.clock.seconds,
+            events: mergeById(current.events, tick.events),
+            timelineEvents: mergeById(current.timelineEvents, tick.timelineEvents),
+            decisions: mergeById(current.decisions, tick.decisions),
+            phases: mergeById(current.phases, tick.phases),
+            ratings: mergeById(current.ratings || [], tick.ratings),
+            momentum: tick.momentum || current.momentum,
+          } : current);
+          if (tick.clock.finished) {
+            stream?.close();
+            setConnection("finished");
+          }
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setConnection("offline");
+          setApiError(error instanceof Error ? error.message : "Match API unavailable.");
+        }
+      }
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      stream?.close();
+    };
+  }, []);
+
+  const matchData = snapshot || {};
+  const match = matchData.match || MATCH;
+  const events = matchData.events || [];
+  const timelineEvents = matchData.timelineEvents || [];
+  const decisions = matchData.decisions || [];
+  const phases = matchData.phases || [];
+  const statRows = matchData.stats || [];
+  const momentum = matchData.momentum || [];
+  const lineupPlayers = buildLineup(matchData.people || [], currentFrame);
+  const lineupIds = new Set(lineupPlayers.map((player) => player.personId).filter(Boolean));
+  const latestRatings = new Map();
+  const lineupSecond = currentFrame?.timeSeconds ?? Number.MAX_SAFE_INTEGER;
+  const ratingRows = matchData.ratings || [];
+  for (let index = ratingRows.length - 1; index >= 0 && latestRatings.size < lineupIds.size; index -= 1) {
+    const rating = ratingRows[index];
+    if (rating.timeSeconds > lineupSecond || !lineupIds.has(rating.playerId) || latestRatings.has(rating.playerId)) continue;
+    latestRatings.set(rating.playerId, rating);
+  }
+  const ratedLineupPlayers = lineupPlayers.map((player) => {
+    const rating = latestRatings.get(player.personId);
+    return {
+      ...player,
+      rating: rating?.rating ?? null,
+      ratingDelta: rating?.ratingDelta ?? 0,
+    };
+  });
+  const decisionCounts = decisions.reduce((counts, decision) => {
+    if (decision.type in counts) counts[decision.type] += 1;
+    return counts;
+  }, { correct: 0, questionable: 0, controversial: 0 });
 
   return (
     <div className="flex h-full flex-col gap-3">
       <Card className="shrink-0">
         <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs">
           <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-            {MATCH.competition} · {MATCH.round}
+            {match.competition} · {match.round}
           </span>
           <span className="flex items-center gap-1.5 font-semibold">
-            <span className="size-2.5 rounded-full" style={{ backgroundColor: MATCH.home.color }} />
-            {MATCH.home.code}
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: match.home.color }} />
+            {match.home.code}
             <span className="mx-0.5 font-mono text-base font-bold tracking-tight">
-              {MATCH.score[0]} – {MATCH.score[1]}
+              {match.score[0]} – {match.score[1]}
             </span>
-            {MATCH.away.code}
-            <span className="size-2.5 rounded-full" style={{ backgroundColor: MATCH.away.color }} />
+            {match.away.code}
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: match.away.color }} />
           </span>
-          <span className="text-muted-foreground">{MATCH.stadium}</span>
-          <span className="text-muted-foreground">Att {MATCH.attendance}</span>
-          <span className="text-muted-foreground">Incident {MATCH.incidentId}</span>
-          <LiveClock clock={clock} />
+          <span className="text-muted-foreground">{match.stadium}</span>
+          <span className="text-muted-foreground">Att {match.attendance}</span>
+          <span className="text-muted-foreground">Incident {match.incidentId}</span>
+          <span className="text-muted-foreground">
+            {apiError
+              ? "Match data unavailable"
+              : snapshot?.dataSource?.ok
+                ? "Match data · PostgreSQL connected"
+                : snapshot
+                  ? "Match data connected"
+                  : "Loading match data…"}
+          </span>
+          <LiveClock clock={clock} connection={connection} />
         </CardContent>
       </Card>
 
@@ -495,35 +738,40 @@ export default function OverviewTab() {
             {timeline === "decisions" ? (
               <div className="relative flex min-h-0 flex-1 flex-col justify-between overflow-y-auto">
                 <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
-                {MATCH_DECISIONS.map((decision) => (
+                {decisions.map((decision) => (
                   <DecisionRow key={decision.id} decision={decision} />
                 ))}
+                {!decisions.length ? (
+                  <p className="px-1 text-[11px] text-muted-foreground">
+                    {apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
+                  </p>
+                ) : null}
               </div>
             ) : (
-              <EventTimeline />
+              <EventTimeline events={timelineEvents} phases={phases} match={match} />
             )}
             <div className="shrink-0 border-t pt-2">
               {timeline === "decisions" ? (
                 <p className="text-[11px] text-muted-foreground">
-                  <span className="font-medium" style={{ color: RATINGS.green.color }}>{counts.green} correct</span>
+                  <span className="font-medium" style={{ color: RATINGS.green.color }}>{decisionCounts.correct} correct</span>
                   {" · "}
-                  <span className="font-medium" style={{ color: RATINGS.amber.color }}>{counts.amber} questionable</span>
+                  <span className="font-medium" style={{ color: RATINGS.amber.color }}>{decisionCounts.questionable} questionable</span>
                   {" · "}
-                  <span className="font-medium" style={{ color: RATINGS.red.color }}>{counts.red} controversial</span>
+                  <span className="font-medium" style={{ color: RATINGS.red.color }}>{decisionCounts.controversial} controversial</span>
                   {" · "}
-                  {MATCH_DECISIONS.length} decisions
+                  {decisions.length} decisions
                 </p>
               ) : (
-                <EventTimelineLegend />
+                <EventTimelineLegend events={timelineEvents} />
               )}
             </div>
           </CardContent>
         </Card>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <PlaybackFrame />
+          <PlaybackFrame frame={currentFrame} match={match} people={matchData.people || []} />
           <div className="flex min-h-0 flex-1 flex-col">
-            <AgentPanel clock={clock} />
+            <AgentPanel clock={clock} events={events} phases={phases} match={match} />
           </div>
         </div>
 
@@ -531,29 +779,29 @@ export default function OverviewTab() {
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">
             <div>
               <CardTitle className="text-sm">Match stats</CardTitle>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Placeholder data feed - sofascore style comparison.</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Mock match stats from the API.</p>
             </div>
             <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1">
-                <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.home.color }} />
-                {MATCH.home.code} pushing
+                <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
+                {match.home.code} pushing
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="size-2 rounded-full" style={{ backgroundColor: MATCH.away.color }} />
-                {MATCH.away.code} pushing
+                <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
+                {match.away.code} pushing
               </span>
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3">
-            <MomentumChart />
+            <MomentumChart match={match} events={timelineEvents} values={momentum} />
 
             <div className="grid min-h-0 flex-1 items-start gap-4 border-t pt-3 lg:grid-cols-[1fr_250px]">
               <div className="flex min-h-0 flex-col justify-between">
-                {STAT_ROWS.map((row) => (
-                  <StatBarRow key={row.label} row={row} />
+                {statRows.map((row) => (
+                  <StatBarRow key={row.label} row={row} match={match} />
                 ))}
               </div>
-              <LineupPitch />
+              <LineupPitch match={match} players={ratedLineupPlayers} />
             </div>
           </CardContent>
         </Card>
