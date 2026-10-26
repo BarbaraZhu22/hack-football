@@ -8,7 +8,7 @@ from db.connection import db_connection
 from match.clock import parse_clock, parse_clock_to_milliseconds
 from match.normalize import normalize_precedents
 from match import queries
-from match.stream import match_event_stream
+from match.stream import match_event_stream, parse_after_seconds
 from match.snapshot import create_snapshot
 from match.tracking import create_tracking_window
 
@@ -33,10 +33,16 @@ def get_match_snapshot(through: str = Query(DEFAULT_LIVE_CLOCK)):
 @router.get("/api/match/stream")
 async def get_match_stream(after: str = Query(DEFAULT_LIVE_CLOCK)):
     try:
-        if not after.isdigit():
-            parse_clock(after)
+        after_seconds = parse_after_seconds(after)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    try:
+        with db_connection() as conn:
+            create_snapshot(conn, after_seconds)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
     async def event_generator():
         try:

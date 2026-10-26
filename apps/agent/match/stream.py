@@ -16,33 +16,49 @@ from config import match_tick_ms
 from db.connection import db_connection
 
 
-def _parse_after(value: str) -> int:
+def parse_after_seconds(value: str) -> int:
     if value.isdigit():
         return int(value)
     return parse_clock(value)
 
 
+def frame_for_elapsed_second(frames: list[dict], second: int) -> dict | None:
+    second_ms = second * 1000
+    candidates = [
+        frame
+        for frame in frames
+        if frame["timeMilliseconds"] <= second_ms
+        and (second == 0 or frame["timeMilliseconds"] > (second - 1) * 1000)
+    ]
+    if not candidates:
+        candidates = [frame for frame in frames if int(frame["timeSeconds"]) == second]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda frame: frame["timeMilliseconds"])
+
+
 async def match_event_stream(after_value: str) -> AsyncIterator[str]:
-    after_seconds = _parse_after(after_value)
+    after_seconds = parse_after_seconds(after_value)
     tick_delay = match_tick_ms() / 1000.0
 
     with db_connection() as conn:
         dataset = load_full_dataset(conn)
         initial = create_snapshot(conn, after_seconds)
 
-    final_seconds = max(
-        max((f["clockSeconds"] for f in dataset["frames"]), default=0),
-        max((e["clockSeconds"] for e in dataset["events"]), default=0),
-        max((p["clockSeconds"] for p in dataset["phases"]), default=0),
+    final_seconds = int(
+        max(
+            max((f["timeSeconds"] for f in dataset["frames"]), default=0),
+            max((e["timeSeconds"] for e in dataset["events"]), default=0),
+            max((p["timeSeconds"] for p in dataset["phases"]), default=0),
+        )
     )
     all_events = sorted(
         [*dataset["events"], *dataset["phases"]],
         key=lambda item: (item["timeMilliseconds"], item["sequence"]),
     )
-    frame_by_time = {f["clockSeconds"]: f for f in dataset["frames"]}
     ratings_by_second: dict[int, list] = {}
     for rating in dataset["ratings"]:
-        ratings_by_second.setdefault(rating["matchSecond"], []).append(rating)
+        ratings_by_second.setdefault(int(rating["matchSecond"]), []).append(rating)
 
     yield f"event: ready\ndata: {json.dumps({'clock': initial['clock']})}\n\n"
 
@@ -62,7 +78,7 @@ async def match_event_stream(after_value: str) -> AsyncIterator[str]:
         tick = {
             "clock": clock,
             "match": {**MATCH, "score": score_at(known_events)},
-            "frame": frame_by_time.get(next_seconds),
+            "frame": frame_for_elapsed_second(dataset["frames"], next_seconds),
             "ratings": ratings_by_second.get(next_seconds, []),
             "events": [e for e in next_events if e["type"] != "phase"],
             "phases": [e for e in next_events if e["type"] == "phase"],
