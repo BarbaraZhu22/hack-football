@@ -1,6 +1,6 @@
 # Overview data
 
-The Overview loads `GET /api/match` (remote PostgreSQL via the agent, or CSV fallback), then `GET /api/match/stream?after=<cursor>`. Event rows carry stable IDs, actor references, chain links, decisions, score state, shot/pass/duel/foul/card/set-piece metrics, incident IDs, and factual commentary.
+The Overview loads `GET /api/match` (PostgreSQL via the agent only), then `GET /api/match/stream?after=<cursor>`. Event rows carry stable IDs, actor references, chain links, decisions, score state, shot/pass/duel/foul/card/set-piece metrics, incident IDs, and factual commentary.
 
 **Backend time is authoritative:** the UI uses snapshot and tick **`clock`** / **`cursor`** only. The snapshot returns one **`frame`** at the cursor (not a full `frames[]` history) and **`ratings`** for that cursor second only; each SSE tick adds that second's frame, events, and ratings.
 

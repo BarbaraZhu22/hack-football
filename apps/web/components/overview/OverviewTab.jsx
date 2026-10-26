@@ -632,9 +632,7 @@ export default function OverviewTab() {
             {apiError
               ? "Match data unavailable"
               : snapshot?.dataSource?.ok
-                ? snapshot.dataSource.backend === "local-csv"
-                  ? "Local CSV · live replay"
-                  : "Match data · PostgreSQL connected"
+                ? "Match data · PostgreSQL"
                 : snapshot
                   ? "Match data connected"
                   : "Loading match data…"}
@@ -698,7 +696,7 @@ export default function OverviewTab() {
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">
             <div>
               <CardTitle className="text-sm">Match stats</CardTitle>
-              <p className="mt-0.5 desk-type-meta text-muted-foreground">Local CSV · recalculated with the live clock.</p>
+              <p className="mt-0.5 desk-type-meta text-muted-foreground">Stats and momentum update with the live clock.</p>
             </div>
             <div className="flex items-center gap-2.5 desk-type-meta text-muted-foreground">
               <span className="inline-flex items-center gap-1">

@@ -155,7 +155,7 @@ Implementation: CSS variables in `globals.css`; the fixed theme id lives in `lib
 
 Browser → Next.js `POST /api/chat` → FastAPI (`AGENT_URL`, server-side only) → Microsoft agent adapter.
 
-The Match overview loads its initial data through `GET /api/match` and live updates through `GET /api/match/stream` (Server-Sent Events). Next.js proxies these to FastAPI (`AGENT_URL`), which reads PostgreSQL. If the agent is unreachable or returns a server error, the same routes fall back to the CSV tables under `apps/web/data`. Incident adjudication also uses `GET /api/match/precedents` and pitch replay uses `GET /api/match/tracking` with the same remote-first, CSV-backup behavior.
+The Match overview loads its initial data through `GET /api/match` and live updates through `GET /api/match/stream` (Server-Sent Events). Next.js **only proxies** to FastAPI (`AGENT_URL` → PostgreSQL); there is no CSV fallback on match routes. Incident adjudication uses `GET /api/match/precedents` and pitch replay uses `GET /api/match/tracking` the same way.
 
 ### 5.2 Contract
 

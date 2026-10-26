@@ -1,6 +1,6 @@
 # Match API and data contract
 
-The overview reads one historical snapshot, then continues through a single server-sent events (SSE) connection. Next.js routes proxy to the Python agent, which reads PostgreSQL. When the agent is down or returns a server error, the same routes read the CSV tables under `apps/web/data` and replay locally.
+The overview reads one historical snapshot, then continues through a single server-sent events (SSE) connection. Next.js routes **proxy only** to the Python agent (PostgreSQL). There is **no CSV fallback** on these routes; connection failures and agent HTTP errors are returned to the client.
 
 ## Time authority (SSOT)
 
@@ -12,7 +12,7 @@ If **`frame`** is `null`, **`clock`** and **`cursor`** are still valid; the UI s
 
 ## Snapshot
 
-`GET /api/match` (optional `?through=78:32`; default live entry from server config) returns match metadata, score, statistics, all events through the cursor, a single **`frame`**, player ratings for the cursor second only, phases, timeline decisions, momentum, players, officials, laws, and precedents. The response does **not** include a `frames[]` array. Successful agent responses include `dataSource.backend: "postgresql"`. CSV fallback uses `"local-csv"`.
+`GET /api/match` (optional `?through=78:32`; default live entry from server config) returns match metadata, score, statistics, all events through the cursor, a single **`frame`**, player ratings for the cursor second only, phases, timeline decisions, momentum, players, officials, laws, and precedents. The response does **not** include a `frames[]` array. Successful agent responses include `dataSource.backend: "postgresql"`.
 
 The default live entry is 78:32 (`cursor` 4712). Period lengths: first half 46:00, second half 48:00, full time at 94:00 displayed as 90+3:00.
 
@@ -48,11 +48,11 @@ When the agent serves the stream, ticks come from PostgreSQL. CSV fallback repla
 
 ## Runtime
 
-| Route | Primary | Fallback |
-|-------|---------|----------|
-| `/api/match` | FastAPI → PostgreSQL | Local CSV snapshot |
-| `/api/match/stream` | FastAPI SSE | Local CSV replay |
-| `/api/match/precedents` | FastAPI → PostgreSQL | Local `precedents.csv` |
-| `/api/match/tracking` | FastAPI → PostgreSQL | Local `frames.csv` |
+| Route | Backend |
+|-------|---------|
+| `/api/match` | FastAPI → PostgreSQL |
+| `/api/match/stream` | FastAPI SSE |
+| `/api/match/precedents` | FastAPI → PostgreSQL |
+| `/api/match/tracking` | FastAPI → PostgreSQL |
 
 Set `AGENT_URL` on the Next.js server and `DATABASE_URL` on the agent. Client-side requests always use the Next.js `/api/match*` routes.
