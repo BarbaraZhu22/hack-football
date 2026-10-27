@@ -579,9 +579,9 @@ function TabSwitch({ value, onChange, options }) {
           onClick={() => onChange(option.id)}
           aria-pressed={value === option.id}
           className={cn(
-            "rounded px-2 py-1 desk-type-meta font-medium transition-colors",
+            "rounded-control px-2 py-1 desk-type-meta font-medium transition-colors",
             value === option.id
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
               : "text-muted-foreground hover:text-foreground",
           )}
         >

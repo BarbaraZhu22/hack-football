@@ -357,7 +357,7 @@ export default function IncidentAgentPanel() {
           <div className="inline-flex shrink-0 rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Incident review view">
             <Button
               type="button"
-              variant={activeView === "rules" ? "secondary" : "ghost"}
+              variant={activeView === "rules" ? "default" : "ghost"}
               size="sm"
               aria-pressed={activeView === "rules"}
               onClick={() => chooseView("rules")}
@@ -367,7 +367,7 @@ export default function IncidentAgentPanel() {
             </Button>
             <Button
               type="button"
-              variant={activeView === "precedents" ? "secondary" : "ghost"}
+              variant={activeView === "precedents" ? "default" : "ghost"}
               size="sm"
               aria-pressed={activeView === "precedents"}
               onClick={() => chooseView("precedents")}
