@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/conversation";
 import { Message, MessageContent } from "@/components/ui/message";
 import { PromptInput } from "@/components/ui/prompt-input";
+import { SmartAnalysisCard } from "@/components/ui/smart-analysis-card";
+import { ThinkingBlock } from "@/components/ui/thinking-block";
 import { ToolInvocationList } from "@/components/ui/tool-invocation";
 
 function tabFromPathname(pathname) {
@@ -38,13 +40,47 @@ function ChatPendingIndicator() {
   );
 }
 
-function normalizeAssistantMessage(result) {
-  if (!result.message?.content) return null;
+function createStreamingAssistant() {
   return {
     role: "assistant",
-    content: result.message.content,
-    toolCalls: Array.isArray(result.toolCalls) ? result.toolCalls : [],
+    phase: "loading",
+    content: "",
+    thinking: "",
+    thinkingOpen: false,
+    toolCalls: [],
+    analysis: null,
   };
+}
+
+function AssistantReply({ message }) {
+  const showLoading = message.phase === "loading" && !message.toolCalls.length && !message.thinking;
+  const hasAnalysis = Boolean(message.analysis?.ruling);
+  const showThinking = Boolean(message.thinking) && (message.phase !== "done" || hasAnalysis);
+  const showPlainReply = message.phase === "done" && !hasAnalysis && message.content;
+
+  return (
+    <div className="space-y-1.5">
+      {showLoading ? <ChatPendingIndicator /> : null}
+      <ToolInvocationList toolCalls={message.toolCalls} />
+      {showThinking ? (
+        <ThinkingBlock
+          text={message.thinking}
+          open={message.thinkingOpen}
+          onToggle={() => {
+            message.onToggleThinking?.();
+          }}
+        />
+      ) : null}
+      {message.phase === "done" && hasAnalysis ? (
+        <SmartAnalysisCard analysis={message.analysis} />
+      ) : null}
+      {showPlainReply ? (
+        <Message from="assistant">
+          <MessageContent from="assistant">{message.content}</MessageContent>
+        </Message>
+      ) : null}
+    </div>
+  );
 }
 
 export function AgentConversation({
@@ -57,33 +93,82 @@ export function AgentConversation({
   const pathname = usePathname();
   const { run } = useScene();
   const [messages, setMessages] = useState(() => initialMessage
-    ? [{ role: "assistant", content: initialMessage, toolCalls: [] }]
+    ? [{ role: "assistant", content: initialMessage, phase: "done", toolCalls: [] }]
     : []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const seededRef = useRef(null);
+  const streamIndexRef = useRef(null);
+
+  function patchStreamingAssistant(updater) {
+    const index = streamIndexRef.current;
+    if (index == null) return;
+    setMessages((current) => {
+      const next = [...current];
+      const target = next[index];
+      if (!target || target.role !== "assistant") return current;
+      next[index] = updater({ ...target });
+      return next;
+    });
+  }
 
   async function dispatchChat(nextMessages) {
     setPending(true);
     setError(null);
+    streamIndexRef.current = nextMessages.length;
+    setMessages((current) => [...current, createStreamingAssistant()]);
 
     try {
-      const result = await sendChatMessage({
-        messages: nextMessages.map(({ role, content: text }) => ({ role, content: text })),
-        context: { tab: tabFromPathname(pathname), ...context },
-      });
+      const result = await sendChatMessage(
+        {
+          messages: nextMessages.map(({ role, content: text }) => ({ role, content: text })),
+          context: { tab: tabFromPathname(pathname), ...context },
+        },
+        (event, data) => {
+          if (event === "tool") {
+            patchStreamingAssistant((message) => {
+              const exists = message.toolCalls.some(
+                (call) => call.name === data.name && JSON.stringify(call.input) === JSON.stringify(data.input),
+              );
+              return {
+                ...message,
+                phase: "streaming",
+                toolCalls: exists ? message.toolCalls : [...message.toolCalls, { name: data.name, input: data.input }],
+              };
+            });
+          }
+          if (event === "thinking" && data?.delta) {
+            patchStreamingAssistant((message) => ({
+              ...message,
+              phase: "streaming",
+              thinkingOpen: true,
+              thinking: `${message.thinking}${data.delta}`,
+            }));
+          }
+        },
+      );
 
-      const assistantMessage = normalizeAssistantMessage(result);
-      if (assistantMessage) {
-        setMessages((current) => [...current, assistantMessage]);
-      }
+      patchStreamingAssistant((message) => ({
+        ...message,
+        phase: "done",
+        content: result.message?.content ?? message.thinking,
+        thinking: message.thinking || result.message?.content || "",
+        thinkingOpen: false,
+        toolCalls: Array.isArray(result.toolCalls) ? result.toolCalls : message.toolCalls,
+        analysis: result.analysis ?? null,
+      }));
 
       if (Array.isArray(result.actions) && result.actions.length > 0) {
         run(result.actions);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
+      setMessages((current) => {
+        if (streamIndexRef.current == null) return current;
+        return current.filter((_, index) => index !== streamIndexRef.current);
+      });
     } finally {
+      streamIndexRef.current = null;
       setPending(false);
     }
   }
@@ -109,15 +194,35 @@ export function AgentConversation({
       <ConversationContent>
         {messages.map((message, index) => (
           <div key={`${message.role}-${index}`} className="space-y-1">
-            {message.role === "assistant" ? (
-              <ToolInvocationList toolCalls={message.toolCalls} />
-            ) : null}
-            <Message from={message.role}>
-              <MessageContent from={message.role}>{message.content}</MessageContent>
-            </Message>
+            {message.role === "assistant" && message.phase ? (
+              <AssistantReply
+                message={{
+                  ...message,
+                  onToggleThinking: () => {
+                    setMessages((current) => {
+                      const next = [...current];
+                      const target = next[index];
+                      if (!target || target.role !== "assistant") return current;
+                      next[index] = { ...target, thinkingOpen: !target.thinkingOpen };
+                      return next;
+                    });
+                  },
+                }}
+              />
+            ) : message.role === "assistant" ? (
+              <>
+                <ToolInvocationList toolCalls={message.toolCalls} />
+                <Message from="assistant">
+                  <MessageContent from="assistant">{message.content}</MessageContent>
+                </Message>
+              </>
+            ) : (
+              <Message from={message.role}>
+                <MessageContent from={message.role}>{message.content}</MessageContent>
+              </Message>
+            )}
           </div>
         ))}
-        {pending ? <ChatPendingIndicator /> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </ConversationContent>
       <PromptInput

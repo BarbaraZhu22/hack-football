@@ -16,10 +16,21 @@ export async function POST(request) {
       body: JSON.stringify(payload),
     });
 
-    const body = await response.text();
-    return new Response(body, {
+    if (!response.ok) {
+      const body = await response.text();
+      return new Response(body, {
+        status: response.status,
+        headers: { "Content-Type": response.headers.get("content-type") || "application/json" },
+      });
+    }
+
+    return new Response(response.body, {
       status: response.status,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": response.headers.get("content-type") || "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
     });
   } catch (error) {
     const detail =

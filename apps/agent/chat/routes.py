@@ -1,10 +1,11 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from chat.service import generate_adjudication, generate_commentary
-from providers.microsoft import chat as microsoft_chat
+from providers.microsoft import chat_stream as microsoft_chat_stream
 
 router = APIRouter(tags=["chat"])
 
@@ -47,10 +48,16 @@ async def chat_endpoint(body: ChatRequest):
         "messages": [message.model_dump() for message in body.messages],
         "context": body.context.model_dump() if body.context else {},
     }
-    try:
-        return await microsoft_chat(payload["messages"], payload.get("context"))
-    except (RuntimeError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    async def event_stream():
+        async for chunk in microsoft_chat_stream(payload["messages"], payload.get("context")):
+            yield chunk
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/api/commentary")

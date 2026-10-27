@@ -747,7 +747,6 @@ export default function OverviewTab() {
           </span>
           <span className="text-muted-foreground">{match.stadium}</span>
           <span className="text-muted-foreground">Att {match.attendance}</span>
-          <span className="text-muted-foreground">Incident {match.incidentId}</span>
           <span className="text-muted-foreground">
             {apiError
               ? "Match data unavailable"
@@ -788,7 +787,11 @@ export default function OverviewTab() {
                     <p className="px-1 desk-type-meta text-muted-foreground">
                       {controversialOnly
                         ? "No controversial decisions recorded."
-                        : apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
+                        : apiError
+                          ? "Match data unavailable"
+                          : snapshot
+                            ? "No decision events recorded."
+                            : "Connecting to match API…"}
                     </p>
                   ) : null}
                 </div>
