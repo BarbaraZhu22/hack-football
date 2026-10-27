@@ -45,14 +45,14 @@ Copy and commentary are English.
 | --- | --- | --- |
 | `/overview` | Overview | Live clock, events, decisions, stats, momentum, lineup, commentary |
 | `/pitch` | Incident | 3D tackle and offside review, laws, precedents, ruling |
-| `/tactics` | Game | Canvas game, no agent |
+| `/game` | Game | A small football puzzle. Football should always be full of joy. |
 | `/match` | — | Static views, not in the nav |
 
 ## Repo
 
 ```text
 apps/web/          Next.js desk
-  app/(desk)/      overview, pitch, tactics, match
+  app/(desk)/      overview, pitch, game, match
   app/api/         proxy only
   components/      layout, overview, pitch, three, chat, ui
   lib/             scene commands, incident registry

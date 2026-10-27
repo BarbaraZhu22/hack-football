@@ -1,7 +1,7 @@
 {
   "chatRequest": {
     "messages": [{ "role": "user|assistant|system", "content": "string" }],
-    "context": { "tab": "pitch|match|tactics" }
+    "context": { "tab": "pitch|match|game|overview" }
   },
   "chatResponse": {
     "message": { "role": "assistant", "content": "string" },

@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 const tabs = [
   { href: "/overview", label: "Overview", Icon: LayoutDashboard },
   { href: "/pitch", label: "Incident", Icon: Whistle },
-  { href: "/tactics", label: "Game", Icon: Gamepad2 },
+  { href: "/game", label: "Game", Icon: Gamepad2 },
 ];
 
 const tooltipClass = "pointer-events-none absolute left-full top-1/2 z-[60] ml-3 -translate-y-1/2 whitespace-nowrap rounded-control border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100";
@@ -28,7 +28,7 @@ export default function DeskLayout({ children }) {
   const pathname = usePathname();
 
   // Overview and the full-screen game use the whole content area without an agent rail.
-  const isGamePage = pathname === "/tactics";
+  const isGamePage = pathname === "/game" || pathname === "/tactics";
   const showAgentRail = pathname !== "/overview" && !isGamePage;
   const isIncidentPage = pathname === "/pitch";
   const AgentPanel = isIncidentPage ? IncidentAgentPanel : AgentChat;

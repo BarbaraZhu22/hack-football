@@ -340,7 +340,7 @@ function makeGame() {
   };
 }
 
-export default function TacticsTab() {
+export default function GameTab() {
   const canvasRef = useRef(null);
   const spriteRef = useRef(null);
   const runSpriteRef = useRef(null);

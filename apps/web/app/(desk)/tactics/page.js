@@ -1,5 +1,5 @@
-import TacticsTab from "@/components/tactics/TacticsTab";
+import { redirect } from "next/navigation";
 
 export default function TacticsPage() {
-  return <TacticsTab />;
+  redirect("/game");
 }

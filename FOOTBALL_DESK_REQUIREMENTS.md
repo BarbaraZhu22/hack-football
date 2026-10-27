@@ -30,7 +30,7 @@ Football Desk is a web workspace for a football-themed experience with
 Allowed changes **inside** the frozen tree:
 
 - Add or edit files within existing folders.
-- Add new files under `components/pitch/`, `components/match/`, or `components/tactics/` for page-specific UI.
+- Add new files under `components/pitch/`, `components/match/`, or `components/game/` for page-specific UI.
 - Add atoms under `components/ui/` following shadcn / AI Elements patterns.
 - Extend `app/globals.css` and theme tokens; add small co-located CSS only when Tailwind tokens are insufficient (see §2.3).
 
@@ -46,7 +46,7 @@ apps/web/
       layout.js
       pitch/page.js
       match/page.js
-      tactics/page.js
+      game/page.js
     api/
       chat/route.js
       match/route.js
@@ -63,7 +63,7 @@ apps/web/
       actions/          # catalog.js, retarget.js, pose.js
     pitch/              # Pitch tab UI only
     match/              # Match tab UI only
-    tactics/            # Tactics tab UI only
+    game/               # Game tab UI only
   lib/
     utils.js
     themes.js
@@ -78,7 +78,7 @@ apps/web/
   package.json
 ```
 
-Route URLs stay: `/pitch`, `/match`, `/tactics`. Root `/` redirects to `/pitch`.
+Route URLs stay: `/pitch`, `/match`, `/game`. `/tactics` redirects to `/game`. Root `/` redirects to `/overview`.
 
 ### 2.3 CSS vs components
 
@@ -98,7 +98,7 @@ When adding UI or behavior:
 |----------|------|
 | `components/pitch/` | Pitch tab UI, including viewport chrome (`ViewportChrome`, minimap, co-located CSS). |
 | `components/match/` | Everything UI-specific to the Match tab. |
-| `components/tactics/` | Everything UI-specific to the Tactics tab. |
+| `components/game/` | Everything UI-specific to the Game tab. |
 | `components/three/` | WebGL / R3F rendering only; subscribes to `lib/scene` state. |
 | `components/chat/` | Shared agent chat (all tabs). |
 | `components/layout/` | `DeskLayout` only: logo, tab links, theme switch, chat slot. |
@@ -179,7 +179,7 @@ Shared contract: [`contracts/agent.json`](contracts/agent.json).
 }
 ```
 
-- **`context.tab`:** `pitch` | `match` | `tactics`.
+- **`context.tab`:** `pitch` | `match` | `game` | `overview`.
 - **`actions`:** scene commands (see §6); applied in the client via `useScene().run(actions)`.
 
 ### 5.3 Microsoft Agent
@@ -225,9 +225,9 @@ Supported action types (extending the list requires updating `contracts/agent.js
 - Load its initial snapshot via `/api/match` and live updates via `/api/match/stream`, using backend **`clock`** / **`cursor`** as the only live time source (slim snapshot: single `frame`, cursor-second ratings, no `frames[]` in the initial payload).
 - Match-specific cards and lists in `components/match/`.
 
-### Tactics
+### Game
 
-- Tactics controls and copy in `components/tactics/`.
+- Game controls and copy in `components/game/`.
 - May dispatch scene commands (arrows, highlights); agent may send the same commands.
 
 ---

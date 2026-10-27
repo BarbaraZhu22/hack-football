@@ -16,7 +16,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatContext(BaseModel):
-    tab: Literal["pitch", "match", "tactics", "overview"] = "pitch"
+    tab: Literal["pitch", "match", "tactics", "game", "overview"] = "pitch"
     incident: dict[str, Any] | None = None
     minuteContext: dict[str, Any] | None = None
     pitch: dict[str, Any] | None = None

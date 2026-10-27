@@ -22,11 +22,11 @@ import { ToolInvocationList } from "@/components/ui/tool-invocation";
 function tabFromPathname(pathname) {
   if (pathname?.startsWith("/overview")) return "overview";
   if (pathname?.startsWith("/match")) return "match";
-  if (pathname?.startsWith("/tactics")) return "tactics";
+  if (pathname?.startsWith("/game") || pathname?.startsWith("/tactics")) return "game";
   return "pitch";
 }
 
-const DEFAULT_GREETING = "Football desk agent is ready. Ask about the pitch, match, or tactics.";
+const DEFAULT_GREETING = "Football desk agent is ready. Ask about the pitch or the match.";
 
 function ChatPendingIndicator() {
   return (
