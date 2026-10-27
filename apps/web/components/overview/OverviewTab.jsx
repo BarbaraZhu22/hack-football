@@ -601,6 +601,8 @@ export default function OverviewTab() {
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
   const receivedTickRef = useRef(false);
+  const [liveTickEvents, setLiveTickEvents] = useState([]);
+  const [liveTickDecisions, setLiveTickDecisions] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,6 +637,12 @@ export default function OverviewTab() {
             setCurrentFrame(tick.frame);
           }
           setClock(tick.clock);
+          if (Array.isArray(tick.events) && tick.events.length) {
+            setLiveTickEvents(tick.events);
+          }
+          if (Array.isArray(tick.decisions) && tick.decisions.length) {
+            setLiveTickDecisions(tick.decisions);
+          }
           setSnapshot((current) => current ? {
             ...current,
             match: tick.match || current.match,
@@ -815,7 +823,14 @@ export default function OverviewTab() {
             clockSeconds={clock?.seconds ?? null}
           />
           <div className="flex min-h-0 flex-1 flex-col">
-            <AgentPanel events={events} phases={phases} decisions={decisions} match={match} />
+            <AgentPanel
+              events={events}
+              phases={phases}
+              decisions={decisions}
+              match={match}
+              liveTickEvents={liveTickEvents}
+              liveTickDecisions={liveTickDecisions}
+            />
           </div>
         </div>
 

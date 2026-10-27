@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getIncident } from "@/lib/incidents";
+import { PRECEDENT_TYPES } from "@/lib/precedent-types";
 
 import { useMatchAgentFeed } from "./useMatchAgentFeed";
 
@@ -50,6 +51,12 @@ function makeFeed(events, phases) {
     }));
 }
 
+function historicalLine(entry) {
+  if (!entry.event) return entry.label || "";
+  // Pre-live rows: read pushed match history only (never call the model).
+  return entry.event.commentary || entry.event.note || entry.event.label || entry.label || "";
+}
+
 function findDecisionForEvent(decisions, event) {
   if (!event) return null;
   return decisions.find((decision) => decision.eventId === event.id || decision.eventId === event.eventId) || null;
@@ -79,12 +86,30 @@ function ModeSwitch({ value, onChange }) {
   );
 }
 
-export default function AgentPanel({ events = [], phases = [], decisions = [], match }) {
+export default function AgentPanel({
+  events = [],
+  phases = [],
+  decisions = [],
+  match,
+  liveTickEvents = [],
+  liveTickDecisions = [],
+}) {
   const [mode, setMode] = useState("live");
   const [minuteContext, setMinuteContext] = useState(null);
   const [assistantSeed, setAssistantSeed] = useState(null);
   const feedRef = useRef(null);
-  const { commentaryByEventId } = useMatchAgentFeed({ events, decisions, match });
+  const { commentaryByEventId } = useMatchAgentFeed({ liveTickEvents, liveTickDecisions, match });
+  const [liveGeneratedIds, setLiveGeneratedIds] = useState(() => new Set());
+
+  useEffect(() => {
+    const commentaryIds = liveTickEvents.filter((event) => event.showInCommentary).map((event) => event.id);
+    if (!commentaryIds.length) return;
+    setLiveGeneratedIds((current) => {
+      const next = new Set(current);
+      for (const id of commentaryIds) next.add(id);
+      return next;
+    });
+  }, [liveTickEvents]);
   const feed = useMemo(() => makeFeed(events, phases).slice(-24), [events, phases]);
 
   useEffect(() => {
@@ -95,12 +120,15 @@ export default function AgentPanel({ events = [], phases = [], decisions = [], m
   function openAssistantForEntry(entry) {
     const decision = findDecisionForEvent(decisions, entry.event);
     const incident = entry.event?.incidentId ? getIncident(entry.event.incidentId) : null;
+    const clockLabel = entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`;
+    const registryId = incident?.id || entry.event?.incidentId || null;
     const context = {
-      clockLabel: entry.clockLabel,
-      commentaryLine: commentaryByEventId[entry.eventId || entry.id] || null,
+      clockLabel,
+      commentaryLine: commentaryByEventId[entry.eventId || entry.id] || historicalLine(entry),
       event: entry.event,
       decision,
       incident,
+      precedentTypes: registryId ? PRECEDENT_TYPES[registryId] || [] : [],
       match: match
         ? {
             home: match.home?.code,
@@ -113,7 +141,10 @@ export default function AgentPanel({ events = [], phases = [], decisions = [], m
     setMinuteContext(context);
     setAssistantSeed({
       role: "user",
-      content: `Explain this moment at ${entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}.`,
+      content:
+        `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `
+        + "Use search_rules and search_precedents, then state what share of similar historical cases "
+        + "would match your call (give a percentage and brief count if the tool results allow).",
     });
     setMode("assistant");
   }
@@ -129,15 +160,17 @@ export default function AgentPanel({ events = [], phases = [], decisions = [], m
         {mode === "live" ? (
           <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             {feed.map((entry) => {
-              const line = commentaryByEventId[entry.eventId || entry.id];
-              const pending = entry.event && !line;
+              const eventId = entry.eventId || entry.id;
+              const line = commentaryByEventId[eventId];
+              const awaitsAi = entry.event && liveGeneratedIds.has(eventId);
+              const pending = awaitsAi && !line;
               return (
                 <div key={entry.id} className="flex gap-2 py-[3px]">
                   <span className="w-10 shrink-0 pt-px text-right desk-type-meta tabular-nums text-muted-foreground">
                     {entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}
                   </span>
                   <p className={cn("min-w-0 flex-1 text-xs leading-5", toneOf(entry.kind))}>
-                    {line || (pending ? "…" : entry.label || "")}
+                    {line || (pending ? "…" : historicalLine(entry))}
                   </p>
                   {entry.event ? (
                     <Button

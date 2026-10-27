@@ -58,7 +58,7 @@ async def commentary_endpoint(body: CommentaryRequest):
     try:
         line = await generate_commentary(body.facts)
         return {"eventId": body.eventId, "text": line}
-    except (RuntimeError, ValueError) as error:
+    except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
@@ -66,5 +66,5 @@ async def commentary_endpoint(body: CommentaryRequest):
 async def adjudicate_endpoint(body: AdjudicateRequest):
     try:
         return await generate_adjudication(body.model_dump())
-    except (RuntimeError, ValueError) as error:
+    except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

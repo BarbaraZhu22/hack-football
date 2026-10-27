@@ -24,6 +24,20 @@ function tabFromPathname(pathname) {
 
 const DEFAULT_GREETING = "Football desk agent is ready. Ask about the pitch, match, or tactics.";
 
+function ChatPendingIndicator() {
+  return (
+    <Message from="assistant">
+      <MessageContent from="assistant" className="py-2.5">
+        <span className="flex items-center gap-1" aria-label="Assistant is thinking">
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70" />
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70 [animation-delay:150ms]" />
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70 [animation-delay:300ms]" />
+        </span>
+      </MessageContent>
+    </Message>
+  );
+}
+
 function normalizeAssistantMessage(result) {
   if (!result.message?.content) return null;
   return {
@@ -96,6 +110,7 @@ export function AgentConversation({
             </Message>
           </div>
         ))}
+        {pending ? <ChatPendingIndicator /> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </ConversationContent>
       <PromptInput
