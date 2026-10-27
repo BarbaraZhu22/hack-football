@@ -17,21 +17,10 @@ function parseSseBlock(block) {
   }
 }
 
-export async function streamChatMessage({ messages, context, adjudicate = false }, onEvent) {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, context, adjudicate: Boolean(adjudicate) }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Chat failed (${response.status})`);
-  }
-
+async function readSseStream(response, onEvent) {
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error("Chat stream unavailable");
+    throw new Error("Stream unavailable");
   }
 
   const decoder = new TextDecoder();
@@ -52,7 +41,7 @@ export async function streamChatMessage({ messages, context, adjudicate = false 
         donePayload = parsed.data;
       }
       if (parsed.event === "error") {
-        throw new Error(parsed.data?.message || "Chat stream failed");
+        throw new Error(parsed.data?.message || "Stream failed");
       }
     }
   }
@@ -65,13 +54,43 @@ export async function streamChatMessage({ messages, context, adjudicate = false 
         donePayload = parsed.data;
       }
       if (parsed.event === "error") {
-        throw new Error(parsed.data?.message || "Chat stream failed");
+        throw new Error(parsed.data?.message || "Stream failed");
       }
     }
   }
 
   if (!donePayload) {
-    throw new Error("Chat stream ended without a done event");
+    throw new Error("Stream ended without a done event");
   }
   return donePayload;
+}
+
+export async function streamAdjudication(payload, onEvent) {
+  const response = await fetch("/api/adjudicate/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Adjudication failed (${response.status})`);
+  }
+
+  return readSseStream(response, onEvent ?? (() => {}));
+}
+
+export async function streamChatMessage({ messages, context, adjudicate = false }, onEvent) {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, context, adjudicate: Boolean(adjudicate) }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Chat failed (${response.status})`);
+  }
+
+  return readSseStream(response, onEvent);
 }

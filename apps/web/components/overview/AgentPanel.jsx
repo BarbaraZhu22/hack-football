@@ -122,7 +122,7 @@ export default function AgentPanel({
     const decision = findDecisionForEvent(decisions, entry.event);
     const incident = entry.event?.incidentId ? getIncident(entry.event.incidentId) : null;
     const clockLabel = entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`;
-    const registryId = incident?.id || entry.event?.incidentId || null;
+    const registryId = incident?.id || entry.event?.incidentRegistryId || entry.event?.incidentId || null;
     const ruleCriteria = registryId === "tackle"
       ? CRITERIA.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading }))
       : [];
@@ -146,11 +146,11 @@ export default function AgentPanel({
     const eventId = entry.eventId || entry.id;
     setMinuteContext(context);
     setMode("assistant");
-    if (seededMomentsRef.current.has(eventId)) return;
     seededMomentsRef.current.add(eventId);
     setAssistantSeed({
-      key: eventId,
+      key: `${eventId}-${Date.now()}`,
       adjudicate: true,
+      minuteContext: context,
       role: "user",
       content:
         `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `

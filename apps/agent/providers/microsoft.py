@@ -58,6 +58,31 @@ def _to_framework_messages(messages: list[dict[str, Any]]) -> list[Message]:
     return framework_messages
 
 
+def _picked(source: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {key: source[key] for key in keys if source.get(key) not in (None, "")}
+
+
+def _slim_minute_context_for_chat(minute_context: dict[str, Any]) -> dict[str, Any]:
+    event = minute_context.get("event") if isinstance(minute_context.get("event"), dict) else {}
+    decision = minute_context.get("decision") if isinstance(minute_context.get("decision"), dict) else {}
+    incident = minute_context.get("incident") if isinstance(minute_context.get("incident"), dict) else {}
+    match = minute_context.get("match") if isinstance(minute_context.get("match"), dict) else {}
+    rule_criteria = minute_context.get("ruleCriteria")
+    slim: dict[str, Any] = {
+        "clockLabel": minute_context.get("clockLabel"),
+        "commentaryLine": minute_context.get("commentaryLine"),
+        "precedentTypes": minute_context.get("precedentTypes") if isinstance(minute_context.get("precedentTypes"), list) else [],
+        "event": _picked(event, ("type", "label", "player", "relatedPlayer", "teamCode", "decisionLabel", "decisionDetail", "note")),
+        "decision": _picked(decision, ("label", "detail", "decisionLabel", "decisionDetail", "decisionKind", "minuteLabel")),
+        "incident": _picked(incident, ("id", "label", "minute", "summary")),
+    }
+    if match:
+        slim["match"] = _picked(match, ("home", "away", "score", "competition"))
+    if isinstance(rule_criteria, list) and rule_criteria:
+        slim["ruleCriteria"] = rule_criteria
+    return {key: value for key, value in slim.items() if value not in (None, "", {}, [])}
+
+
 def _slim_incident_context(incident: dict[str, Any]) -> dict[str, Any]:
     rule_criteria = incident.get("ruleCriteria")
     slim_criteria = []
@@ -94,12 +119,16 @@ def _context_messages(context: dict[str, Any] | None, adjudicate: bool) -> list[
 
     minute_context = (context or {}).get("minuteContext")
     if isinstance(minute_context, dict):
-        payload = json.dumps({"incident": minute_context.get("clockLabel")}, ensure_ascii=False)
+        payload = json.dumps(
+            {"minuteContext": _slim_minute_context_for_chat(minute_context)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         context_messages.append(
             Message(
                 role="system",
                 contents=(
-                    "The user may be discussing a commentary moment. Treat the following as reference only: "
+                    "The user may be discussing a commentary moment. Treat the following JSON as reference only: "
                     f"{payload}"
                 ),
             )

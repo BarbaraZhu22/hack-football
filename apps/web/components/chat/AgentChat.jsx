@@ -106,6 +106,11 @@ export function AgentConversation({
   const [error, setError] = useState(null);
   const seededRef = useRef(null);
   const pendingCountRef = useRef(0);
+  const contextRef = useRef(context);
+
+  useEffect(() => {
+    contextRef.current = context;
+  }, [context]);
 
   function patchAssistantAt(index, updater) {
     setMessages((current) => {
@@ -119,17 +124,30 @@ export function AgentConversation({
 
   const adjudicateRef = useRef(false);
 
-  async function dispatchChat(nextMessages, assistantIndex, runAdjudicate = false) {
+  async function dispatchChat(nextMessages, assistantIndex, runAdjudicate = false, contextOverride = null) {
     pendingCountRef.current += 1;
     setPending(true);
     setError(null);
 
     try {
+      const activeContext = {
+        tab: tabFromPathname(pathname),
+        ...(contextOverride ?? contextRef.current),
+      };
+      const shouldAdjudicate =
+        runAdjudicate
+        || (
+          Boolean(activeContext.minuteContext?.precedentTypes?.length)
+          && /referee|decision|ruling|offside|card|foul|precedent/i.test(
+            nextMessages[nextMessages.length - 1]?.content || "",
+          )
+        );
+
       const result = await sendChatMessage(
         {
           messages: nextMessages.map(({ role, content: text }) => ({ role, content: text })),
-          context: { tab: tabFromPathname(pathname), ...context },
-          adjudicate: runAdjudicate,
+          context: activeContext,
+          adjudicate: shouldAdjudicate,
         },
         (event, data) => {
           if (event === "tool") {
@@ -196,10 +214,13 @@ export function AgentConversation({
     if (seededRef.current === key) return;
     seededRef.current = key;
     adjudicateRef.current = Boolean(seedMessage.adjudicate);
+    const contextOverride = seedMessage.minuteContext
+      ? { ...contextRef.current, minuteContext: seedMessage.minuteContext }
+      : null;
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content: seedMessage.content, toolCalls: [] }];
       const assistantIndex = nextMessages.length;
-      void dispatchChat(nextMessages, assistantIndex, adjudicateRef.current);
+      void dispatchChat(nextMessages, assistantIndex, adjudicateRef.current, contextOverride);
       return [...nextMessages, createStreamingAssistant()];
     });
   }, [seedMessage]);

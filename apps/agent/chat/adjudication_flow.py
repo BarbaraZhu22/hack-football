@@ -16,6 +16,7 @@ from chat.analysis import (
     reset_rule_criteria,
 )
 from chat.constants import INCIDENT_PRECEDENT_TYPES
+from chat.analysis import show_analysis_json, take_ui_analysis
 from chat.tool_trace import extract_tool_calls
 from chat.tools import ADJUDICATION_TOOLS
 from chat.workflow import aggregate_catalog, catalog_context_message, catalog_tool_events, run_catalog_lookups
@@ -30,7 +31,8 @@ ADJUDICATION_INSTRUCTIONS = (
     "Use criterion ids for geometric checks, rule refs for law rows, and caseId for precedents. "
     "Then write a short explanation naming two or three closest cases. "
     "Do not write user-visible text before show_analysis finishes. "
-    "Do not restate full rule bodies or precedent facts."
+    "Do not restate full rule bodies or precedent facts. "
+    "Never ask the user to paste commentary or incident details when minuteContext is already provided."
 )
 
 DESK_INSTRUCTIONS = (
@@ -132,6 +134,27 @@ def extract_adjudication_facts_from_body(body: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _materialize_analysis_from_tool_calls(result: Any) -> None:
+    if take_ui_analysis():
+        return
+    for call in extract_tool_calls(result):
+        if call.get("name") != "show_analysis":
+            continue
+        payload = call.get("input") or {}
+        reviews = payload.get("reviews", "[]")
+        if isinstance(reviews, (list, dict)):
+            reviews = json.dumps(reviews, ensure_ascii=False)
+        elif not isinstance(reviews, str):
+            reviews = "[]"
+        show_analysis_json(
+            str(payload.get("incident_type") or payload.get("incidentType") or ""),
+            str(payload.get("ruling") or ""),
+            str(payload.get("summary") or ""),
+            reviews,
+        )
+        return
+
+
 def adjudication_messages(facts: dict[str, Any], catalog_calls, user_messages: list[Message]) -> list[Message]:
     payload = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
     return [
@@ -150,10 +173,12 @@ def adjudication_messages(facts: dict[str, Any], catalog_calls, user_messages: l
 async def run_adjudication_agent(
     facts: dict[str, Any],
     user_text: str,
+    catalog_calls: list | None = None,
 ) -> tuple[list[dict[str, Any]], Any]:
     clear_ui_analysis()
     precedent_types = facts.get("precedentTypes") or []
-    catalog_calls = run_catalog_lookups(precedent_types)
+    if catalog_calls is None:
+        catalog_calls = run_catalog_lookups(precedent_types)
     catalog_rules, catalog_precedents = aggregate_catalog(catalog_calls)
     precedent_token = bind_precedent_types(precedent_types)
     criteria_token = bind_rule_criteria(facts.get("ruleCriteria"))
@@ -165,6 +190,7 @@ async def run_adjudication_agent(
             [Message(role="user", contents=user_text.strip() or "Provide your ruling for this incident.")],
         )
         result = await _adjudication_agent().run(messages)
+        _materialize_analysis_from_tool_calls(result)
         tool_calls = [*catalog_tool_events(catalog_calls), *extract_tool_calls(result)]
         return tool_calls, result
     finally:

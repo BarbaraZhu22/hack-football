@@ -114,6 +114,29 @@ def precedent_match_counts(incident_type: str, ruling: str) -> dict[str, int]:
     return {"aligned": aligned, "total": total, "percent": percent}
 
 
+def build_catalog_lists(
+    rule_criteria: list[dict[str, Any]] | None,
+    catalog_rules: list[dict[str, Any]],
+    catalog_precedents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    criteria = [row for row in (rule_criteria or []) if isinstance(row, dict)]
+    return {
+        "criteria": [{**row, "review": None} for row in criteria],
+        "rules": [
+            {
+                "id": row.get("ref") or "",
+                "ref": row.get("ref") or "",
+                "title": row.get("title") or "",
+                "body": row.get("body") or "",
+                "review": None,
+            }
+            for row in catalog_rules
+            if isinstance(row, dict)
+        ],
+        "precedents": [{**row, "review": None} for row in catalog_precedents if isinstance(row, dict)],
+    }
+
+
 def build_ui_analysis(
     incident_type: str,
     ruling: str,

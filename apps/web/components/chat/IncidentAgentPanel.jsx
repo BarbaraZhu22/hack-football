@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, CircleCheck, CircleHelp, CircleX, Scale } from "lucide-react";
+import { BookOpen, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale } from "lucide-react";
 
 import { AgentConversation } from "@/components/chat/AgentChat";
 import { Badge } from "@/components/ui/badge";
@@ -9,9 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ACTUAL_DECISION, CRITERIA } from "@/lib/incident";
-import { ADJUDICATOR_RESULT_CONTRACT, getAdjudicatorResultTemplate, getRecordedDecision } from "@/lib/adjudication";
+import { getAdjudicatorResultTemplate, getRecordedDecision } from "@/lib/adjudication";
 import { useIncidentReview } from "@/lib/incident-review-context";
-import { requestAdjudication } from "@/lib/match-ai";
+import { streamAdjudication } from "@/lib/match-ai";
+import { ToolInvocationList } from "@/components/ui/tool-invocation";
 
 import { PRECEDENT_TYPES } from "@/lib/precedent-types";
 
@@ -153,7 +154,7 @@ function AgentResultIcon({ value, kind = "correctness", rationale, loading = fal
   );
 }
 
-function CriterionRow({ criterion, adjudication, adjudicationLoading = false }) {
+function CriterionRow({ criterion, adjudication, showAdjudicator = false, adjudicationLoading = false }) {
   const met = criterion.status === "met";
   const notAssessed = criterion.status === "not-assessed";
   return (
@@ -171,11 +172,28 @@ function CriterionRow({ criterion, adjudication, adjudicationLoading = false }) 
           </span>
         </p>
       </div>
-      <AgentResultIcon
-        value={adjudication?.correctness}
-        rationale={adjudication?.rationale}
-        loading={adjudicationLoading}
-      />
+      {showAdjudicator ? (
+        <AgentResultIcon
+          value={adjudication?.correctness}
+          rationale={adjudication?.rationale}
+          loading={adjudicationLoading}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CatalogToolProgress({ toolCalls, waitingForTools }) {
+  return (
+    <div className="space-y-2 rounded-md border p-2">
+      <ToolInvocationList toolCalls={toolCalls} />
+      {waitingForTools || !toolCalls.length ? (
+        <div className="flex items-center gap-1.5 desk-type-meta text-muted-foreground">
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70" />
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70 [animation-delay:150ms]" />
+          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70 [animation-delay:300ms]" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -199,31 +217,46 @@ function DecisionFact({ label, value }) {
   );
 }
 
-function PrecedentCard({ precedent, adjudication, adjudicationLoading = false }) {
+function PrecedentCard({ precedent, adjudication, showAdjudicator = false, adjudicationLoading = false }) {
   const caseId = precedent.caseId || precedent.id;
   const source = precedent.source || {};
   const historicAssessment = precedent.assessment || {};
   const subtype = (precedent.incidentSubtype || precedent.incident_subtype || "").replaceAll(";", " · ").replaceAll("-", " ");
 
+  const headline = precedent.fixture || precedent.caseId || caseId || "Historical Premier League case";
+  const meta = [precedent.season, precedent.minute, subtype].filter(Boolean).join(" · ");
+  const finalDecision = precedent.finalDecision || precedent.final_decision || "Decision not recorded";
+
   return (
     <details className="group rounded-md border bg-background px-2.5">
       <summary className="flex cursor-pointer list-none items-start gap-2 py-2.5 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+          aria-hidden
+        />
         <div className="min-w-0 flex-1">
-          <p className="desk-type-meta font-semibold leading-4">{precedent.fixture || "Historical Premier League case"}</p>
-          <p className="mt-0.5 desk-type-meta leading-4 text-muted-foreground">
-            {[precedent.season, precedent.minute, subtype].filter(Boolean).join(" · ")}
-          </p>
-          <p className="mt-1 desk-type-meta leading-4">{precedent.finalDecision || precedent.final_decision || "Decision not recorded"}</p>
+          <p className="desk-type-meta font-semibold leading-4">{headline}</p>
+          {meta ? (
+            <p className="mt-0.5 desk-type-meta leading-4 text-muted-foreground">{meta}</p>
+          ) : null}
+          <p className="mt-1 desk-type-meta leading-4">{finalDecision}</p>
+          {precedent.facts ? (
+            <p className="mt-1 desk-type-meta leading-4 text-muted-foreground line-clamp-2 group-open:hidden">
+              {precedent.facts}
+            </p>
+          ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 pt-0.5" title="Current-case consistency from adjudicator">
-          <span className="desk-type-meta text-muted-foreground">Consistency</span>
-          <AgentResultIcon
-            value={adjudication?.consistency}
-            kind="consistency"
-            rationale={adjudication?.rationale}
-            loading={adjudicationLoading}
-          />
-        </div>
+        {showAdjudicator ? (
+          <div className="flex shrink-0 items-center gap-1.5 pt-0.5" title="Current-case consistency from adjudicator">
+            <span className="desk-type-meta text-muted-foreground">Consistency</span>
+            <AgentResultIcon
+              value={adjudication?.consistency}
+              kind="consistency"
+              rationale={adjudication?.rationale}
+              loading={adjudicationLoading}
+            />
+          </div>
+        ) : null}
       </summary>
       <div className="space-y-2 border-t py-2.5">
         <div>
@@ -266,13 +299,32 @@ function PrecedentCard({ precedent, adjudication, adjudicationLoading = false })
   );
 }
 
+function buildIncidentAdjudicationPayload({
+  incidentId,
+  incidentRegistryId,
+  incidentTypes,
+  criteria,
+  decision,
+  currentEvent,
+}) {
+  return {
+    incidentId,
+    incidentRegistryId,
+    precedentTypes: incidentTypes,
+    ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
+    recordedDecision: { label: decision.title, detail: decision.detail },
+    eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
+  };
+}
+
 export default function IncidentAgentPanel() {
   const { review, adjudicatorResults = {}, setAdjudicatorResult } = useIncidentReview();
   const [activeView, setActiveView] = useState("rules");
-  const [precedentState, setPrecedentState] = useState({ incidentId: null, status: "idle", precedents: [], error: null });
-  const [adjudicationState, setAdjudicationState] = useState({
+  const [workflowState, setWorkflowState] = useState({
     incidentId: null,
-    status: "idle",
+    phase: "idle",
+    toolCalls: [],
+    lists: null,
     error: null,
   });
   const decision = getRecordedDecision(review);
@@ -282,82 +334,111 @@ export default function IncidentAgentPanel() {
   const incidentId = review?.incident?.incidentId;
   const incidentTypes = useMemo(() => PRECEDENT_TYPES[review?.incident?.id] ?? [], [review?.incident?.id]);
   const submittedAdjudicatorResult = incidentId ? adjudicatorResults[incidentId] ?? null : null;
+
+  const workflowActive = workflowState.incidentId === incidentId;
+  const workflowPhase = workflowActive ? workflowState.phase : "idle";
+  const catalogLists = workflowActive ? workflowState.lists : null;
+  const analysisLists = submittedAdjudicatorResult?.analysis?.lists;
+  const displayLists = analysisLists ?? catalogLists;
+  const displayCriteria = displayLists?.criteria ?? [];
+  const displayPrecedents = displayLists?.precedents ?? [];
+  const catalogToolCalls = workflowActive ? workflowState.toolCalls : [];
+
   const analysisCounts = submittedAdjudicatorResult?.analysis?.ruleCriteria;
-  const metCount = analysisCounts?.met ?? criteria.filter((criterion) => criterion.status === "met").length;
-  const assessedCount = analysisCounts?.assessed ?? criteria.filter((criterion) => criterion.status !== "not-assessed").length;
+  const metCount = analysisCounts?.met ?? displayCriteria.filter((criterion) => criterion.status === "met").length;
+  const assessedCount = analysisCounts?.assessed ?? displayCriteria.filter((criterion) => criterion.status !== "not-assessed").length;
 
   useEffect(() => {
     if (!incidentId || !incidentTypes.length) {
-      setPrecedentState({ incidentId, status: "ready", precedents: [], error: null });
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    const params = new URLSearchParams();
-    incidentTypes.forEach((type) => params.append("type", type));
-    setPrecedentState((current) => current.incidentId === incidentId && current.status === "ready"
-      ? current
-      : { incidentId, status: "loading", precedents: [], error: null });
-
-    fetch(`/api/match/precedents?${params.toString()}`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Precedent data is unavailable.");
-        setPrecedentState({ incidentId, status: "ready", precedents: data.precedents || [], error: null });
-      })
-      .catch((error) => {
-        if (error.name !== "AbortError") {
-          setPrecedentState({ incidentId, status: "error", precedents: [], error: error.message || "Precedent data is unavailable." });
-        }
+      setWorkflowState({
+        incidentId,
+        phase: "done",
+        toolCalls: [],
+        lists: { criteria: [], rules: [], precedents: [] },
+        error: null,
       });
-
-    return () => controller.abort();
-  }, [incidentId, incidentTypes]);
-
-  const precedents = precedentState.incidentId === incidentId ? precedentState.precedents : [];
-  const precedentStatus = precedentState.incidentId === incidentId ? precedentState.status : "loading";
-
-  useEffect(() => {
-    if (!incidentId) {
-      setAdjudicationState({ incidentId: null, status: "idle", error: null });
       return undefined;
     }
-    if (precedentStatus !== "ready") {
-      setAdjudicationState({ incidentId, status: "idle", error: null });
-      return undefined;
-    }
-    if (submittedAdjudicatorResult?.analysis?.ruling) {
-      setAdjudicationState({ incidentId, status: "ready", error: null });
+    if (submittedAdjudicatorResult?.analysis?.ruling && submittedAdjudicatorResult.analysis?.lists) {
+      setWorkflowState({
+        incidentId,
+        phase: "done",
+        toolCalls: submittedAdjudicatorResult.toolCalls ?? [],
+        lists: submittedAdjudicatorResult.analysis.lists,
+        error: null,
+      });
       return undefined;
     }
 
     let cancelled = false;
-    setAdjudicationState({ incidentId, status: "loading", error: null });
-    requestAdjudication({
+    setWorkflowState({
+      incidentId,
+      phase: "loading",
+      toolCalls: [],
+      lists: null,
+      error: null,
+    });
+
+    const payload = buildIncidentAdjudicationPayload({
       incidentId,
       incidentRegistryId: review?.incident?.id,
-      precedentTypes: incidentTypes,
-      ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
-      recordedDecision: { label: decision.title, detail: decision.detail },
-      eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
+      incidentTypes,
+      criteria,
+      decision,
+      currentEvent,
+    });
+
+    streamAdjudication(payload, (event, data) => {
+      if (cancelled) return;
+      if (event === "tool") {
+        setWorkflowState((current) => {
+          if (current.incidentId !== incidentId) return current;
+          const exists = current.toolCalls.some(
+            (call) => call.name === data.name && JSON.stringify(call.input) === JSON.stringify(data.input),
+          );
+          return {
+            ...current,
+            toolCalls: exists ? current.toolCalls : [...current.toolCalls, data],
+          };
+        });
+      }
+      if (event === "catalog") {
+        setWorkflowState((current) => {
+          if (current.incidentId !== incidentId) return current;
+          return {
+            ...current,
+            phase: "adjudicating",
+            lists: data.lists ?? null,
+            toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls : current.toolCalls,
+          };
+        });
+      }
     })
       .then((result) => {
         if (cancelled) return;
         setAdjudicatorResult({
           incidentId,
           analysis: result.analysis,
+          toolCalls: result.toolCalls ?? [],
           ruleEvaluations: result.ruleEvaluations ?? result.analysis?.ruleEvaluations ?? {},
           precedentComparisons: result.precedentComparisons ?? result.analysis?.precedentComparisons ?? {},
         });
-        setAdjudicationState({ incidentId, status: "ready", error: null });
+        setWorkflowState((current) => ({
+          ...current,
+          incidentId,
+          phase: "done",
+          lists: current.lists ?? result.analysis?.lists ?? null,
+          error: null,
+        }));
       })
       .catch((error) => {
         if (cancelled) return;
-        setAdjudicationState({
+        setWorkflowState((current) => ({
+          ...current,
           incidentId,
-          status: "error",
+          phase: "error",
           error: error instanceof Error ? error.message : "Adjudication is unavailable.",
-        });
+        }));
       });
 
     return () => {
@@ -365,10 +446,9 @@ export default function IncidentAgentPanel() {
     };
   }, [
     incidentId,
-    precedentStatus,
+    incidentTypes,
     submittedAdjudicatorResult?.analysis?.ruling,
     review?.incident?.id,
-    incidentTypes,
     criteria,
     decision.title,
     decision.detail,
@@ -376,15 +456,31 @@ export default function IncidentAgentPanel() {
     setAdjudicatorResult,
   ]);
 
-  const adjudicationLoading =
-    adjudicationState.incidentId === incidentId && adjudicationState.status === "loading";
-  const adjudicationError =
-    adjudicationState.incidentId === incidentId && adjudicationState.status === "error"
-      ? adjudicationState.error
-      : null;
+  const catalogLoading = workflowPhase === "loading" && !catalogLists;
+  const catalogToolsRunning = workflowPhase === "loading" && !catalogLists;
+  const adjudicationLoading = workflowPhase === "adjudicating";
+  const workflowError = workflowPhase === "error" ? workflowState.error : null;
+  const showCatalogLists = Boolean(catalogLists);
+  const showAdjudicatorIcons =
+    adjudicationLoading || Boolean(submittedAdjudicatorResult?.analysis?.ruling);
+
+  const comparisonAnalysis = submittedAdjudicatorResult?.analysis?.ruling
+    ? {
+        result: submittedAdjudicatorResult.analysis.ruling,
+        detail: submittedAdjudicatorResult.analysis.summary || "",
+      }
+    : {
+        result: adjudicationLoading ? "Reviewing…" : "Pending",
+        detail: "",
+      };
+
   const resultTemplate = useMemo(
-    () => getAdjudicatorResultTemplate(incidentId, criteria.map((criterion) => criterion.id), precedents.map((precedent) => precedent.caseId || precedent.id)),
-    [incidentId, criteria, precedents],
+    () => getAdjudicatorResultTemplate(
+      incidentId,
+      displayCriteria.map((criterion) => criterion.id),
+      displayPrecedents.map((precedent) => precedent.caseId || precedent.id),
+    ),
+    [incidentId, displayCriteria, displayPrecedents],
   );
   const adjudicatorResult = adjudicationLoading
     ? resultTemplate
@@ -460,39 +556,44 @@ export default function IncidentAgentPanel() {
                       <Scale className="size-3.5 text-primary" /> Rule criteria match
                     </h2>
                     <Badge variant="outline" className="desk-type-meta">
-                      {adjudicationLoading
-                        ? "Reviewing…"
-                        : criteria.length
-                          ? `${metCount} / ${assessedCount} met`
-                          : "Pending"}
+                      {catalogLoading
+                        ? "Catalog…"
+                        : !showCatalogLists
+                          ? "Pending"
+                          : adjudicationLoading
+                            ? "Reviewing…"
+                            : displayCriteria.length
+                              ? `${metCount} / ${assessedCount} met`
+                              : "Pending"}
                     </Badge>
                   </div>
-                  {adjudicationError ? (
+                  {workflowError ? (
                     <p className="mb-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 desk-type-meta text-destructive">
-                      {adjudicationError}
+                      {workflowError}
                     </p>
                   ) : null}
-                  {criteria.length ? (
+                  {!showCatalogLists ? (
+                    <CatalogToolProgress
+                      toolCalls={catalogToolCalls}
+                      waitingForTools={catalogToolsRunning}
+                    />
+                  ) : showCatalogLists && displayCriteria.length ? (
                     <div className="divide-y rounded-md border px-2">
-                      {criteria.map((criterion) => (
+                      {displayCriteria.map((criterion) => (
                         <CriterionRow
                           key={criterion.id}
                           criterion={criterion}
                           adjudication={adjudicatorResult?.ruleEvaluations?.[criterion.id]}
-                          adjudicationLoading={adjudicationLoading}
+                          showAdjudicator={showAdjudicatorIcons}
+                          adjudicationLoading={showAdjudicatorIcons && adjudicationLoading}
                         />
                       ))}
                     </div>
-                  ) : (
+                  ) : showCatalogLists ? (
                     <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">
-                      No rule criteria are available for this incident yet.
+                      No rule criteria returned for this incident category.
                     </p>
-                  )}
-                  <p className="mt-1 desk-type-meta text-muted-foreground">
-                    {adjudicationLoading
-                      ? "Adjudicator is reviewing criteria against laws and precedents…"
-                      : "Right-side status icons show adjudicator validation."}
-                  </p>
+                  ) : null}
                 </section>
 
                 <section>
@@ -500,8 +601,8 @@ export default function IncidentAgentPanel() {
                   <div className="grid grid-cols-2 gap-2">
                     <ComparisonCard
                       title="Analysis conclusion"
-                      result={comparison.analysis.result}
-                      detail={comparison.analysis.detail}
+                      result={comparisonAnalysis.result}
+                      detail={comparisonAnalysis.detail}
                       tone="analysis"
                     />
                     <ComparisonCard
@@ -517,35 +618,38 @@ export default function IncidentAgentPanel() {
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="desk-type-card">Comparable cases</h2>
                   <Badge variant="outline" className="desk-type-meta">
-                    {precedentStatus === "ready" ? `${precedents.length} cases` : precedentStatus === "loading" ? "Loading" : "Unavailable"}
+                    {catalogLoading
+                      ? "Catalog…"
+                      : showCatalogLists
+                        ? `${displayPrecedents.length} cases`
+                        : "Pending"}
                   </Badge>
                 </div>
-                <p className="desk-type-meta leading-relaxed text-muted-foreground">
-                  Historical cases from the same incident category. Consistency with this incident is left for adjudicator review.
-                </p>
-                {precedentStatus === "loading" ? (
-                  <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">Loading precedent cases…</p>
-                ) : precedentStatus === "error" ? (
-                  <p className="rounded-md border p-2 desk-type-meta text-destructive">{precedentState.error}</p>
-                ) : precedents.length ? (
+                {!showCatalogLists ? (
+                  <CatalogToolProgress
+                    toolCalls={catalogToolCalls}
+                    waitingForTools={catalogToolsRunning}
+                  />
+                ) : showCatalogLists && displayPrecedents.length ? (
                   <div className="space-y-1.5">
-                    {precedents.map((precedent) => (
+                    {displayPrecedents.map((precedent) => (
                       <PrecedentCard
                         key={precedent.caseId || precedent.id}
                         precedent={precedent}
                         adjudication={adjudicatorResult?.precedentComparisons?.[precedent.caseId || precedent.id]}
-                        adjudicationLoading={adjudicationLoading}
+                        showAdjudicator={showAdjudicatorIcons}
+                        adjudicationLoading={showAdjudicatorIcons && adjudicationLoading}
                       />
                     ))}
                   </div>
-                ) : (
+                ) : showCatalogLists ? (
                   <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">
-                    No historical cases are tagged for this incident category yet.
+                    No historical cases returned from the catalog for this incident type.
                   </p>
-                )}
-                {adjudicationError ? (
+                ) : null}
+                {workflowError ? (
                   <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 desk-type-meta text-destructive">
-                    {adjudicationError}
+                    {workflowError}
                   </p>
                 ) : null}
               </div>

@@ -84,3 +84,18 @@ def rules_json(incident_type: str) -> str:
 def precedents_json(incident_type: str) -> str:
     payload = [slim_precedent(row) for row in filter_precedents_by_incident_type(incident_type)]
     return json.dumps(payload, ensure_ascii=False)
+
+
+def precedents_for_ui(precedent_types: list[str]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    for incident_type in precedent_types:
+        if not isinstance(incident_type, str) or not incident_type.strip():
+            continue
+        for row in filter_precedents_by_incident_type(incident_type.strip()):
+            case_id = str(row.get("caseId") or row.get("id") or "")
+            if not case_id or case_id in seen:
+                continue
+            seen.add(case_id)
+            rows.append(row)
+    return rows

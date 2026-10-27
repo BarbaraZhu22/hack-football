@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from chat.service import generate_adjudication, generate_commentary
+from chat.service import adjudication_event_stream, generate_adjudication, generate_commentary
 from providers.microsoft import chat_stream as microsoft_chat_stream
 
 router = APIRouter(tags=["chat"])
@@ -73,6 +73,19 @@ async def commentary_endpoint(body: CommentaryRequest):
         return {"eventId": body.eventId, "text": line}
     except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.post("/api/adjudicate/stream")
+async def adjudicate_stream_endpoint(body: AdjudicateRequest):
+    async def event_stream():
+        async for chunk in adjudication_event_stream(body.model_dump()):
+            yield chunk
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/api/adjudicate")
