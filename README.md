@@ -4,22 +4,24 @@ On-field decisions are often treated as final. Reverse Whistle reviews each call
 
 **Live:** [Incident](https://football-web.calmsmoke-bc79f6a4.uksouth.azurecontainerapps.io/pitch) · [Overview](https://football-web.calmsmoke-bc79f6a4.uksouth.azurecontainerapps.io/overview)
 
+**Code:** [github.com/BarbaraZhu22/hack-football](https://github.com/BarbaraZhu22/hack-football)
+
 ## Architecture
 
 ```mermaid
 flowchart LR
   browser[Browser] --> web["Azure Container Apps<br/>football-web · Next.js"]
-  web -->|REST / SSE| agent[FastAPI agent]
-  agent --> db["Azure Database for PostgreSQL<br/>flexible server"]
-  agent --> foundry[Microsoft Foundry]
+  web -->|REST / SSE| service[FastAPI service]
+  service --> db["Azure Database for PostgreSQL<br/>flexible server"]
+  service --> foundry[Microsoft Foundry]
 ```
 
-The browser only talks to Next.js. Next.js proxies to the agent. The agent reads the database and calls Foundry.
+The browser only talks to Next.js. Next.js proxies to the FastAPI service. The service reads the database and calls Foundry.
 
 | Brief | Where |
 | --- | --- |
 | Real-time match events | Overview, SSE ticks |
-| Stories, highlights, recaps | Commentary agent |
+| Stories, highlights, recaps | Football-Commentary |
 | Explain the moment | Incident 3D review + ruling card |
 | Laws and earlier cases | `rules`, `precedents` |
 | Studio / stream / fan desk | Overview, Incident, commentary |
@@ -54,7 +56,7 @@ Copy and commentary are English.
 apps/web/          Next.js desk
   app/(desk)/      overview, pitch, game, match
   app/api/         proxy only
-  components/      layout, overview, pitch, three, chat, ui
+  components/      layout, overview, pitch, game, three, chat, ui
   lib/             scene commands, incident registry
 apps/agent/        FastAPI
   match/           snapshot, SSE, tracking, SQL
@@ -63,24 +65,23 @@ apps/agent/        FastAPI
   db/              psycopg
 ```
 
-## Agent
+## Agents
 
-| Agent | Job | Tools |
-| --- | --- | --- |
-| Commentary | One spoken line per event | — |
-| Adjudication | Ruling card | `show_analysis` |
-| Desk | Incident chat | capture, scene, rules, precedents, analysis |
-| Follow-up | Later questions | capture, scene |
+Microsoft Foundry runs three agents. This service does those jobs with tools in `chat/tools.py`. Rules and precedents can be called, read, and called again in one turn. Commentary writes its line without a tool.
 
-| Tool | Job |
+| Foundry agent | Tool in this repo |
+| --- | --- |
+| Football-Commentary | none — it writes one spoken line |
+| Football-Rules-Analyst | `search_rules` |
+| Football-Precedents-Analyst | `search_precedents` |
+
+| Tool | Returns |
 | --- | --- |
 | `search_rules` | Law rows for the incident type |
-| `search_precedents` | Past cases: facts, on-field call, VAR, final call |
+| `search_precedents` | Cases: facts, on-field call, VAR, final call |
 | `show_analysis` | Ruling, one-line summary, review of each check |
-| `get_incident_capture` | Contact metrics and current view |
+| `get_incident_capture` | Contact metrics and the current view |
 | `control_scene` | Camera, overlay, marker, speed, playback |
-
-Ruling path: incident facts → `search_rules` + `search_precedents` → `show_analysis`.
 
 | Incident | Precedent types |
 | --- | --- |
@@ -93,19 +94,21 @@ Pitch reconstructs tackle and offside.
 
 ## Database
 
-Azure Database for PostgreSQL flexible server. Agent uses `DATABASE_URL`.
+Azure Database for PostgreSQL flexible server (`DATABASE_URL`).
+
+One simulated match, played through 90+3, and a separate library of laws and historical cases.
 
 | Table | Holds |
 | --- | --- |
-| `events` | Timeline and referee decisions |
-| `frames` | Tracking. Snapshot keeps one frame; tracking route returns a window |
-| `player_ratings` | Ratings for the current second |
-| `people` | Squad |
-| `officials` | Officials |
-| `rules` | Laws, tagged by incident type |
-| `precedents` | Historical cases |
+| `events` | The full timeline: clock, players, score, shots and xG, passes, duels, fouls, cards, set pieces, VAR, and each referee decision |
+| `frames` | Tracking across the match: ball, players, and possession, aligned to the clock |
+| `player_ratings` | A rating for each player at every second |
+| `people` | Both squads, named on every event |
+| `officials` | The match officials |
+| `rules` | Law text, tagged by incident type |
+| `precedents` | Historical cases: facts, on-field call, VAR action, final decision, and the law cited |
 
-Clock authority is the server `cursor`. Default entry is 78:32. One tick is one second.
+The server clock is the only clock. The desk joins at 78:32 and moves one second per tick. A snapshot carries the frame and ratings for that second. Replay asks for a tracking window.
 
 ## Local
 
