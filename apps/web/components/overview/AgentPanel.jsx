@@ -58,9 +58,9 @@ function ModeSwitch({ value, onChange }) {
           onClick={() => onChange(id)}
           aria-pressed={value === id}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded px-2 py-1 desk-type-meta font-medium transition-colors",
+            "inline-flex items-center gap-1.5 rounded-control px-2 py-1 desk-type-meta font-medium transition-colors",
             value === id
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
