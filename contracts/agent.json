@@ -5,7 +5,8 @@
   },
   "chatResponse": {
     "message": { "role": "assistant", "content": "string" },
-    "actions": []
+    "actions": [],
+    "toolCalls": [{ "name": "string", "input": {} }]
   },
   "sceneActions": [
     { "type": "camera.set", "preset": "broadcast|touchline|tactical|referee|free", "position": [0, 0, 0], "lookAt": [0, 0, 0] },

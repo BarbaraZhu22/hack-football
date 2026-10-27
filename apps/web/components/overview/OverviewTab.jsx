@@ -601,6 +601,7 @@ export default function OverviewTab() {
   const [apiError, setApiError] = useState("");
   const [currentFrame, setCurrentFrame] = useState(null);
   const receivedTickRef = useRef(false);
+  const [liveTickEvents, setLiveTickEvents] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,6 +636,9 @@ export default function OverviewTab() {
             setCurrentFrame(tick.frame);
           }
           setClock(tick.clock);
+          if (Array.isArray(tick.events) && tick.events.length) {
+            setLiveTickEvents(tick.events);
+          }
           setSnapshot((current) => current ? {
             ...current,
             match: tick.match || current.match,
@@ -739,16 +743,11 @@ export default function OverviewTab() {
           </span>
           <span className="text-muted-foreground">{match.stadium}</span>
           <span className="text-muted-foreground">Att {match.attendance}</span>
-          <span className="text-muted-foreground">Incident {match.incidentId}</span>
-          <span className="text-muted-foreground">
-            {apiError
-              ? "Match data unavailable"
-              : snapshot?.dataSource?.ok
-                ? "Match data · PostgreSQL"
-                : snapshot
-                  ? "Match data connected"
-                  : "Loading match data…"}
-          </span>
+          {apiError || !snapshot ? (
+            <span className="text-muted-foreground">
+              {apiError ? "Match data unavailable" : "Loading match data…"}
+            </span>
+          ) : null}
           <LiveClock clock={clock} connection={connection} />
         </CardContent>
       </Card>
@@ -780,7 +779,11 @@ export default function OverviewTab() {
                     <p className="px-1 desk-type-meta text-muted-foreground">
                       {controversialOnly
                         ? "No controversial decisions recorded."
-                        : apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
+                        : apiError
+                          ? "Match data unavailable"
+                          : snapshot
+                            ? "No decision events recorded."
+                            : "Connecting to match API…"}
                     </p>
                   ) : null}
                 </div>
@@ -815,7 +818,13 @@ export default function OverviewTab() {
             clockSeconds={clock?.seconds ?? null}
           />
           <div className="flex min-h-0 flex-1 flex-col">
-            <AgentPanel events={events} phases={phases} match={match} />
+            <AgentPanel
+              events={events}
+              phases={phases}
+              decisions={decisions}
+              match={match}
+              liveTickEvents={liveTickEvents}
+            />
           </div>
         </div>
 
