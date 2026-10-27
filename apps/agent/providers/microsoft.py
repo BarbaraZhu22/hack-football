@@ -15,6 +15,21 @@ from providers.foundry_client import build_chat_client
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+BUSY_MESSAGE = "The service is busy. Please try again in a moment."
+
+
+def _is_rate_limited(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = f"{type(current).__name__} {current}".lower().replace(" ", "")
+        if "ratelimit" in text or "ratelimited" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 DESK_INSTRUCTIONS = (
     "You are the Football Desk assistant for a football-themed workspace with "
     "Overview, Incident (3D), and Game tabs. Answer in clear, conversational English. "
@@ -178,3 +193,7 @@ async def chat_stream(
         )
     except (RuntimeError, ValueError) as error:
         yield format_sse("error", {"message": str(error)})
+    except Exception as error:
+        if not _is_rate_limited(error):
+            raise
+        yield format_sse("error", {"message": BUSY_MESSAGE})
