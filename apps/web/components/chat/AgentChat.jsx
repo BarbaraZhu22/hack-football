@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { sendChatMessage } from "@/lib/agent-client";
+import { usePitchChatContext } from "@/lib/pitch-chat-context";
 import { useScene } from "@/lib/scene/SceneProvider";
+import { actionsFromControlScene } from "@/lib/scene/commands";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -74,7 +76,9 @@ function AssistantReply({ message }) {
         />
       ) : null}
       {message.phase === "done" && hasAnalysis ? (
-        <SmartAnalysisCard analysis={message.analysis} />
+        <>
+          <SmartAnalysisCard analysis={message.analysis} />
+        </>
       ) : null}
       {showPlainReply ? (
         <Message from="assistant">
@@ -90,6 +94,7 @@ export function AgentConversation({
   context = {},
   initialMessage = DEFAULT_GREETING,
   seedMessage = null,
+  adjudicate = false,
   className,
 }) {
   const pathname = usePathname();
@@ -101,6 +106,12 @@ export function AgentConversation({
   const [error, setError] = useState(null);
   const seededRef = useRef(null);
   const pendingCountRef = useRef(0);
+  const contextRef = useRef(context);
+  const appliedSceneButtonsRef = useRef(new Set());
+
+  useEffect(() => {
+    contextRef.current = context;
+  }, [context]);
 
   function patchAssistantAt(index, updater) {
     setMessages((current) => {
@@ -112,18 +123,48 @@ export function AgentConversation({
     });
   }
 
-  async function dispatchChat(nextMessages, assistantIndex) {
+  const adjudicateRef = useRef(false);
+
+  async function dispatchChat(nextMessages, assistantIndex, runAdjudicate = false, contextOverride = null) {
     pendingCountRef.current += 1;
     setPending(true);
     setError(null);
+    appliedSceneButtonsRef.current = new Set();
+
+    function runSceneActions(actions) {
+      const fresh = actions.filter((action) => {
+        if (action?.type !== "ui.press" || !action.button) return true;
+        if (appliedSceneButtonsRef.current.has(action.button)) return false;
+        appliedSceneButtonsRef.current.add(action.button);
+        return true;
+      });
+      if (fresh.length) run(fresh);
+    }
 
     try {
+      const activeContext = {
+        tab: tabFromPathname(pathname),
+        ...(contextOverride ?? contextRef.current),
+      };
+      const shouldAdjudicate =
+        runAdjudicate
+        || (
+          Boolean(activeContext.minuteContext?.precedentTypes?.length)
+          && /referee|decision|ruling|offside|card|foul|precedent/i.test(
+            nextMessages[nextMessages.length - 1]?.content || "",
+          )
+        );
+
       const result = await sendChatMessage(
         {
           messages: nextMessages.map(({ role, content: text }) => ({ role, content: text })),
-          context: { tab: tabFromPathname(pathname), ...context },
+          context: activeContext,
+          adjudicate: shouldAdjudicate,
         },
         (event, data) => {
+          if (event === "tool" && data?.name === "control_scene") {
+            runSceneActions(actionsFromControlScene(data.input));
+          }
           if (event === "tool") {
             patchAssistantAt(assistantIndex, (message) => {
               const exists = message.toolCalls.some(
@@ -162,7 +203,7 @@ export function AgentConversation({
       }));
 
       if (Array.isArray(result.actions) && result.actions.length > 0) {
-        run(result.actions);
+        runSceneActions(result.actions);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
@@ -177,7 +218,7 @@ export function AgentConversation({
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
       const assistantIndex = nextMessages.length;
-      void dispatchChat(nextMessages, assistantIndex);
+      void dispatchChat(nextMessages, assistantIndex, false);
       return [...nextMessages, createStreamingAssistant()];
     });
   }
@@ -187,7 +228,16 @@ export function AgentConversation({
     const key = seedMessage.key ?? seedMessage.content;
     if (seededRef.current === key) return;
     seededRef.current = key;
-    void handleSubmit(seedMessage.content);
+    adjudicateRef.current = Boolean(seedMessage.adjudicate);
+    const contextOverride = seedMessage.minuteContext
+      ? { ...contextRef.current, minuteContext: seedMessage.minuteContext }
+      : null;
+    setMessages((current) => {
+      const nextMessages = [...current, { role: "user", content: seedMessage.content, toolCalls: [] }];
+      const assistantIndex = nextMessages.length;
+      void dispatchChat(nextMessages, assistantIndex, adjudicateRef.current, contextOverride);
+      return [...nextMessages, createStreamingAssistant()];
+    });
   }, [seedMessage]);
 
   return (
@@ -238,6 +288,7 @@ export function AgentConversation({
 
 export default function AgentChat() {
   const pathname = usePathname();
+  const pitchContext = usePitchChatContext();
 
   return (
     <Card className="flex h-full min-h-[280px] flex-col overflow-hidden">
@@ -248,7 +299,12 @@ export default function AgentChat() {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-        <AgentConversation />
+        <AgentConversation
+          context={{
+            tab: tabFromPathname(pathname),
+            ...(pitchContext ? { pitch: pitchContext } : {}),
+          }}
+        />
       </CardContent>
     </Card>
   );

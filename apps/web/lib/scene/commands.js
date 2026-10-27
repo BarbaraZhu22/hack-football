@@ -34,6 +34,15 @@ function createInitialSceneState() {
       forces: true,
       dual: true,
     },
+    playback: {
+      playing: false,
+      time: null,
+      seq: 0,
+    },
+    uiPress: {
+      button: "",
+      seq: 0,
+    },
   };
 }
 
@@ -98,6 +107,29 @@ export function applySceneAction(state, action) {
       };
     case "incident.seek":
       return withIncidentFrame(state, action.time);
+    case "incident.playback": {
+      const hasTime = Number.isFinite(Number(action.time));
+      const next = hasTime ? withIncidentFrame(state, action.time) : state;
+      return {
+        ...next,
+        playback: {
+          playing: Boolean(action.playing),
+          time: hasTime ? Number(action.time) : null,
+          seq: (state.playback?.seq ?? 0) + 1,
+        },
+      };
+    }
+    case "ui.press": {
+      const button = String(action.button || "").trim().toLowerCase();
+      if (!button) return state;
+      return {
+        ...state,
+        uiPress: {
+          button,
+          seq: (state.uiPress?.seq ?? 0) + 1,
+        },
+      };
+    }
     case "pitch.overlay.set":
       if (!Object.hasOwn(state.overlays, action.key)) return state;
       return {
@@ -112,6 +144,12 @@ export function applySceneAction(state, action) {
     default:
       return state;
   }
+}
+
+export function actionsFromControlScene(input = {}) {
+  const button = String(input.button || "").trim().toLowerCase();
+  if (!button) return [];
+  return [{ type: "ui.press", button }];
 }
 
 export function applySceneActions(state, actions) {

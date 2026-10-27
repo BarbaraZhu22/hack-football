@@ -410,6 +410,7 @@ export default function PitchTab() {
       run([{ type: "incident.seek", time: boundedTime }]);
     }
   }, [isOffside, run, simulation.duration]);
+
   playbackRef.current = { isOffside, rate, duration: simulation.duration };
 
   useEffect(() => {
@@ -436,6 +437,58 @@ export default function PitchTab() {
   const toggleOverlay = useCallback((key) => {
     run([{ type: "pitch.overlay.set", key, enabled: !state.overlays[key] }]);
   }, [run, state.overlays]);
+
+  const uiPressSeqRef = useRef(0);
+  useEffect(() => {
+    const press = state.uiPress;
+    if (!press?.seq || press.seq === uiPressSeqRef.current) return;
+    uiPressSeqRef.current = press.seq;
+    const button = press.button;
+    if (button.startsWith("camera.")) {
+      setCamera(button.slice("camera.".length));
+      return;
+    }
+    if (button.startsWith("overlay.")) {
+      toggleOverlay(button.slice("overlay.".length));
+      return;
+    }
+    if (button.startsWith("marker.")) {
+      const name = button.slice("marker.".length);
+      const marker = simulation.events.find((item) => item.short.toLowerCase() === name);
+      if (!marker) return;
+      setPlaying(false);
+      seek(marker.t);
+      return;
+    }
+    if (button.startsWith("rate.")) {
+      const speed = Number(button.slice("rate.".length));
+      if (speed === 0.25 || speed === 0.5 || speed === 1) setRate(speed);
+      return;
+    }
+    if (button === "transport.play") {
+      if (timeRef.current >= simulation.duration) seek(0);
+      setPlaying(true);
+      return;
+    }
+    if (button === "transport.pause") {
+      setPlaying(false);
+      return;
+    }
+    if (button === "transport.restart") {
+      setPlaying(false);
+      seek(0);
+      return;
+    }
+    if (button === "transport.step_back") {
+      setPlaying(false);
+      seek(timeRef.current - 1 / 60);
+      return;
+    }
+    if (button === "transport.step_forward") {
+      setPlaying(false);
+      seek(timeRef.current + 1 / 60);
+    }
+  }, [seek, setCamera, simulation.duration, simulation.events, state.uiPress, toggleOverlay]);
 
 
   useEffect(() => {

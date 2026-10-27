@@ -11,6 +11,8 @@ export async function requestCommentary({ eventId, facts }) {
   return data;
 }
 
+export { streamAdjudication } from "@/lib/chat-stream";
+
 export async function requestAdjudication(payload) {
   const response = await fetch("/api/adjudicate", {
     method: "POST",
