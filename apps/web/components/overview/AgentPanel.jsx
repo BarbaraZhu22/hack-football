@@ -97,6 +97,7 @@ export default function AgentPanel({
   const [mode, setMode] = useState("live");
   const [minuteContext, setMinuteContext] = useState(null);
   const [assistantSeed, setAssistantSeed] = useState(null);
+  const seededMomentsRef = useRef(new Set());
   const feedRef = useRef(null);
   const { commentaryByEventId } = useMatchAgentFeed({ liveTickEvents, liveTickDecisions, match });
   const [liveGeneratedIds, setLiveGeneratedIds] = useState(() => new Set());
@@ -138,15 +139,19 @@ export default function AgentPanel({
           }
         : null,
     };
+    const eventId = entry.eventId || entry.id;
     setMinuteContext(context);
+    setMode("assistant");
+    if (seededMomentsRef.current.has(eventId)) return;
+    seededMomentsRef.current.add(eventId);
     setAssistantSeed({
+      key: eventId,
       role: "user",
       content:
         `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `
         + "Use search_rules and search_precedents, then state what share of similar historical cases "
         + "would match your call (give a percentage and brief count if the tool results allow).",
     });
-    setMode("assistant");
   }
 
   return (
@@ -156,9 +161,14 @@ export default function AgentPanel({
         <ModeSwitch value={mode} onChange={setMode} />
       </CardHeader>
 
-      <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-        {mode === "live" ? (
-          <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+      <CardContent className="relative flex min-h-0 flex-1 flex-col p-0">
+        <div
+          ref={feedRef}
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto px-3 py-2",
+            mode !== "live" && "hidden",
+          )}
+        >
             {feed.map((entry) => {
               const eventId = entry.eventId || entry.id;
               const line = commentaryByEventId[eventId];
@@ -195,14 +205,14 @@ export default function AgentPanel({
                 <span className="size-1 animate-pulse rounded-full bg-muted-foreground/60 [animation-delay:300ms]" />
               </span>
             </div>
-          </div>
-        ) : (
-          <AgentConversation
-            placeholder="Ask about the match…"
-            context={{ tab: "overview", minuteContext }}
-            seedMessage={assistantSeed}
-          />
-        )}
+        </div>
+        <AgentConversation
+          className={cn("min-h-0 flex-1", mode !== "assistant" && "hidden")}
+          placeholder="Ask about the match…"
+          context={{ tab: "overview", minuteContext }}
+          seedMessage={assistantSeed}
+          initialMessage="Smart assistant keeps this match thread. Pick a commentary line or ask follow-ups here."
+        />
       </CardContent>
     </Card>
   );

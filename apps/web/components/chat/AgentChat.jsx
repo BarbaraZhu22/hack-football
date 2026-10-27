@@ -52,6 +52,7 @@ export function AgentConversation({
   context = {},
   initialMessage = DEFAULT_GREETING,
   seedMessage = null,
+  className,
 }) {
   const pathname = usePathname();
   const { run } = useScene();
@@ -62,9 +63,7 @@ export function AgentConversation({
   const [error, setError] = useState(null);
   const seededRef = useRef(null);
 
-  async function handleSubmit(content) {
-    const nextMessages = [...messages, { role: "user", content, toolCalls: [] }];
-    setMessages(nextMessages);
+  async function dispatchChat(nextMessages) {
     setPending(true);
     setError(null);
 
@@ -89,16 +88,24 @@ export function AgentConversation({
     }
   }
 
+  async function handleSubmit(content) {
+    setMessages((current) => {
+      const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
+      void dispatchChat(nextMessages);
+      return nextMessages;
+    });
+  }
+
   useEffect(() => {
     if (!seedMessage?.content) return;
-    const key = seedMessage.content;
+    const key = seedMessage.key ?? seedMessage.content;
     if (seededRef.current === key) return;
     seededRef.current = key;
     void handleSubmit(seedMessage.content);
   }, [seedMessage]);
 
   return (
-    <Conversation className="min-h-0 flex-1">
+    <Conversation className={className ?? "min-h-0 flex-1"}>
       <ConversationContent>
         {messages.map((message, index) => (
           <div key={`${message.role}-${index}`} className="space-y-1">
