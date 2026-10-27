@@ -12,12 +12,7 @@ import { ACTUAL_DECISION, CRITERIA } from "@/lib/incident";
 import { ADJUDICATOR_RESULT_CONTRACT, getAdjudicatorResultTemplate, getRecordedDecision } from "@/lib/adjudication";
 import { useIncidentReview } from "@/lib/incident-review-context";
 
-const PRECEDENT_TYPES = {
-  tackle: ["serious_foul_play"],
-  offside: ["offside", "offside_and_red_card"],
-  handball: ["handball"],
-  conflict: ["violent_conduct"],
-};
+import { PRECEDENT_TYPES } from "@/lib/precedent-types";
 
 function getRuleCriteria(review) {
   const incident = review?.incident;

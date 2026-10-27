@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Radio, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { MessageSquare, Radio, Sparkles } from "lucide-react";
 
 import { AgentConversation } from "@/components/chat/AgentChat";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { getIncident } from "@/lib/incidents";
+
+import { useMatchAgentFeed } from "./useMatchAgentFeed";
 
 const MODES = [
   { id: "live", label: "Live commentary", Icon: Radio },
@@ -30,22 +34,25 @@ function toneOf(kind) {
   return TONE[kind] ?? "text-muted-foreground";
 }
 
-function commentaryText(entry) {
-  return entry.commentary || entry.note || entry.label;
-}
-
 function makeFeed(events, phases) {
   const noteworthyPhases = phases.filter((phase) => phase.phase === "half_time" || phase.phase === "full_time");
-  return [...events.filter((event) => event.showInCommentary && event.commentary), ...noteworthyPhases]
+  return [...events.filter((event) => event.showInCommentary), ...noteworthyPhases]
     .sort((left, right) => left.timeMilliseconds - right.timeMilliseconds || left.sequence - right.sequence)
     .map((entry) => ({
       id: entry.id,
+      eventId: entry.eventId || entry.id,
       minute: entry.minute,
       second: entry.second,
       clockLabel: entry.clockLabel,
       kind: entry.type,
-      text: commentaryText(entry),
+      label: entry.label,
+      event: entry.type === "phase" ? null : entry,
     }));
+}
+
+function findDecisionForEvent(decisions, event) {
+  if (!event) return null;
+  return decisions.find((decision) => decision.eventId === event.id || decision.eventId === event.eventId) || null;
 }
 
 function ModeSwitch({ value, onChange }) {
@@ -72,15 +79,44 @@ function ModeSwitch({ value, onChange }) {
   );
 }
 
-export default function AgentPanel({ events = [], phases = [], match }) {
+export default function AgentPanel({ events = [], phases = [], decisions = [], match }) {
   const [mode, setMode] = useState("live");
+  const [minuteContext, setMinuteContext] = useState(null);
+  const [assistantSeed, setAssistantSeed] = useState(null);
   const feedRef = useRef(null);
-  const feed = makeFeed(events, phases).slice(-24);
+  const { commentaryByEventId } = useMatchAgentFeed({ events, decisions, match });
+  const feed = useMemo(() => makeFeed(events, phases).slice(-24), [events, phases]);
 
   useEffect(() => {
     const node = feedRef.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [feed.length, mode]);
+  }, [feed.length, mode, commentaryByEventId]);
+
+  function openAssistantForEntry(entry) {
+    const decision = findDecisionForEvent(decisions, entry.event);
+    const incident = entry.event?.incidentId ? getIncident(entry.event.incidentId) : null;
+    const context = {
+      clockLabel: entry.clockLabel,
+      commentaryLine: commentaryByEventId[entry.eventId || entry.id] || null,
+      event: entry.event,
+      decision,
+      incident,
+      match: match
+        ? {
+            home: match.home?.code,
+            away: match.away?.code,
+            score: match.score,
+            competition: match.competition,
+          }
+        : null,
+    };
+    setMinuteContext(context);
+    setAssistantSeed({
+      role: "user",
+      content: `Explain this moment at ${entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}.`,
+    });
+    setMode("assistant");
+  }
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
@@ -92,16 +128,32 @@ export default function AgentPanel({ events = [], phases = [], match }) {
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
         {mode === "live" ? (
           <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-            {feed.map((entry) => (
-              <div key={entry.id} className="flex gap-2 py-[3px]">
-                <span className="w-10 shrink-0 pt-px text-right desk-type-meta tabular-nums text-muted-foreground">
-                  {entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}
-                </span>
-                <p className={cn("min-w-0 flex-1 text-xs leading-5", toneOf(entry.kind))}>
-                  {entry.text}
-                </p>
-              </div>
-            ))}
+            {feed.map((entry) => {
+              const line = commentaryByEventId[entry.eventId || entry.id];
+              const pending = entry.event && !line;
+              return (
+                <div key={entry.id} className="flex gap-2 py-[3px]">
+                  <span className="w-10 shrink-0 pt-px text-right desk-type-meta tabular-nums text-muted-foreground">
+                    {entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`}
+                  </span>
+                  <p className={cn("min-w-0 flex-1 text-xs leading-5", toneOf(entry.kind))}>
+                    {line || (pending ? "…" : entry.label || "")}
+                  </p>
+                  {entry.event ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 shrink-0"
+                      aria-label="Ask Smart assistant about this moment"
+                      onClick={() => openAssistantForEntry(entry)}
+                    >
+                      <MessageSquare className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
             <div className="flex gap-2 py-1">
               <span className="w-10 shrink-0" />
               <span className="flex items-center gap-1">
@@ -112,7 +164,11 @@ export default function AgentPanel({ events = [], phases = [], match }) {
             </div>
           </div>
         ) : (
-          <AgentConversation placeholder="Ask about the match…" />
+          <AgentConversation
+            placeholder="Ask about the match…"
+            context={{ tab: "overview", minuteContext }}
+            seedMessage={assistantSeed}
+          />
         )}
       </CardContent>
     </Card>

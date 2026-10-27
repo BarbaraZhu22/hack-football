@@ -815,7 +815,7 @@ export default function OverviewTab() {
             clockSeconds={clock?.seconds ?? null}
           />
           <div className="flex min-h-0 flex-1 flex-col">
-            <AgentPanel events={events} phases={phases} match={match} />
+            <AgentPanel events={events} phases={phases} decisions={decisions} match={match} />
           </div>
         </div>
 
