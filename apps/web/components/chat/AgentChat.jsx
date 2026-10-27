@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { sendChatMessage } from "@/lib/agent-client";
 import { usePitchChatContext } from "@/lib/pitch-chat-context";
 import { useScene } from "@/lib/scene/SceneProvider";
+import { actionsFromControlScene, actionsFromPlaybackText } from "@/lib/scene/commands";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -15,7 +16,6 @@ import {
 import { Message, MessageContent } from "@/components/ui/message";
 import { PromptInput } from "@/components/ui/prompt-input";
 import { SmartAnalysisCard } from "@/components/ui/smart-analysis-card";
-import { SmartAnalysisLists } from "@/components/ui/smart-analysis-lists";
 import { ThinkingBlock } from "@/components/ui/thinking-block";
 import { ToolInvocationList } from "@/components/ui/tool-invocation";
 
@@ -78,7 +78,6 @@ function AssistantReply({ message }) {
       {message.phase === "done" && hasAnalysis ? (
         <>
           <SmartAnalysisCard analysis={message.analysis} />
-          <SmartAnalysisLists analysis={message.analysis} />
         </>
       ) : null}
       {showPlainReply ? (
@@ -108,6 +107,7 @@ export function AgentConversation({
   const seededRef = useRef(null);
   const pendingCountRef = useRef(0);
   const contextRef = useRef(context);
+  const appliedSceneKeyRef = useRef("");
 
   useEffect(() => {
     contextRef.current = context;
@@ -151,6 +151,14 @@ export function AgentConversation({
           adjudicate: shouldAdjudicate,
         },
         (event, data) => {
+          if (event === "tool" && data?.name === "control_scene") {
+            const sceneActions = actionsFromControlScene(data.input);
+            const sceneKey = JSON.stringify(sceneActions);
+            if (sceneActions.length && appliedSceneKeyRef.current !== sceneKey) {
+              appliedSceneKeyRef.current = sceneKey;
+              run(sceneActions);
+            }
+          }
           if (event === "tool") {
             patchAssistantAt(assistantIndex, (message) => {
               const exists = message.toolCalls.some(
@@ -189,7 +197,11 @@ export function AgentConversation({
       }));
 
       if (Array.isArray(result.actions) && result.actions.length > 0) {
-        run(result.actions);
+        const sceneKey = JSON.stringify(result.actions);
+        if (appliedSceneKeyRef.current !== sceneKey) {
+          appliedSceneKeyRef.current = sceneKey;
+          run(result.actions);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
@@ -201,6 +213,14 @@ export function AgentConversation({
   }
 
   function handleSubmit(content) {
+    if (pathname?.startsWith("/pitch")) {
+      const sceneActions = actionsFromPlaybackText(content);
+      const sceneKey = JSON.stringify(sceneActions);
+      if (sceneActions.length && appliedSceneKeyRef.current !== sceneKey) {
+        appliedSceneKeyRef.current = sceneKey;
+        run(sceneActions);
+      }
+    }
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
       const assistantIndex = nextMessages.length;

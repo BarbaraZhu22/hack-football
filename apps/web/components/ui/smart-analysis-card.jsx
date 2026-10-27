@@ -1,5 +1,6 @@
 "use client";
 
+import { SmartAnalysisLists } from "@/components/ui/smart-analysis-lists";
 import { cn } from "@/lib/utils";
 
 function MatchProgress({ label, met, total, className }) {
@@ -53,6 +54,7 @@ export function SmartAnalysisCard({ analysis, className }) {
         met={precedentMatch.aligned ?? 0}
         total={precedentMatch.total ?? 0}
       />
+      <SmartAnalysisLists analysis={analysis} embedded />
     </div>
   );
 }

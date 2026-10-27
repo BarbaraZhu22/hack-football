@@ -1,4 +1,5 @@
 import json
+import re
 
 from agent_framework import tool
 
@@ -41,7 +42,7 @@ def control_scene(
     highlight_target: str = "",
     highlight_id: str = "",
 ) -> str:
-    """Control the 3D pitch viewport. command: camera | seek | overlay | highlight | reset | clear_arrows."""
+    """Control the 3D pitch viewport. command: camera | seek | play | pause | overlay | highlight | reset | clear_arrows. play starts the incident clip; pass time_seconds to start at that incident time."""
     cmd = (command or "").strip().lower()
     actions: list[dict] = []
 
@@ -49,6 +50,14 @@ def control_scene(
         actions.append({"type": "camera.set", "preset": camera_preset.strip()})
     elif cmd == "seek" and time_seconds >= 0:
         actions.append({"type": "incident.seek", "time": float(time_seconds)})
+    elif cmd in {"play", "resume"}:
+        if time_seconds >= 0:
+            actions.append({"type": "incident.seek", "time": float(time_seconds)})
+            actions.append({"type": "incident.playback", "playing": True, "time": float(time_seconds)})
+        else:
+            actions.append({"type": "incident.playback", "playing": True})
+    elif cmd in {"pause", "stop"}:
+        actions.append({"type": "incident.playback", "playing": False})
     elif cmd == "overlay" and overlay_key.strip():
         key = overlay_key.strip()
         if key in {"skeleton", "labels", "trajectory", "forces", "dual"}:
@@ -69,7 +78,7 @@ def control_scene(
         return json.dumps(
             {
                 "ok": False,
-                "message": "Unknown command or missing parameters. Use camera, seek, overlay, highlight, reset, or clear_arrows.",
+                "message": "Unknown command or missing parameters. Use camera, seek, play, pause, overlay, highlight, reset, or clear_arrows.",
             },
             ensure_ascii=False,
         )
@@ -97,6 +106,36 @@ def materialize_control_scene_calls(result) -> None:
             str(payload.get("highlight_target") or ""),
             str(payload.get("highlight_id") or ""),
         )
+
+
+_PLAYBACK_TIME = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b",
+    re.IGNORECASE,
+)
+_PLAYBACK_TIME_BARE = re.compile(
+    r"\b(?:play|resume|seek|jump|scrub|go to)\s+(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def ensure_playback_request(user_text: str) -> None:
+    """If the user asked to play, seek, or pause and the model did not, queue that scene action."""
+    if any(action.get("type") in {"incident.seek", "incident.playback"} for action in take_scene_actions()):
+        return
+    text = user_text or ""
+    match = _PLAYBACK_TIME.search(text) or _PLAYBACK_TIME_BARE.search(text)
+    seconds = -1.0
+    if match:
+        seconds = float(match.group(1))
+    wants_play = re.search(r"\b(play|resume)\b", text, re.IGNORECASE)
+    wants_pause = re.search(r"\b(pause|stop)\b", text, re.IGNORECASE)
+    wants_seek = re.search(r"\b(seek|jump|scrub|go to)\b", text, re.IGNORECASE)
+    if wants_play:
+        control_scene("play", time_seconds=seconds)
+    elif wants_seek and seconds >= 0:
+        control_scene("seek", time_seconds=seconds)
+    elif wants_pause:
+        control_scene("pause")
 
 
 PITCH_DESK_TOOLS = [get_incident_capture, control_scene]

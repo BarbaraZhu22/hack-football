@@ -27,7 +27,7 @@ from chat.analysis import (
 from chat.sse import format_sse
 from chat.stream_events import extract_analysis, parse_function_call
 from chat.tool_trace import extract_tool_calls
-from chat.tools import materialize_control_scene_calls
+from chat.tools import ensure_playback_request, materialize_control_scene_calls
 from chat.pitch_context import bind_pitch_context, bind_scene_actions, reset_pitch_context, reset_scene_actions, take_scene_actions
 from chat.workflow import aggregate_catalog, catalog_tool_events
 from providers.foundry_client import build_chat_client
@@ -172,6 +172,7 @@ async def _stream_agent(
     agent: Agent,
     run_messages: list[Message],
     prefetched_calls: list[dict[str, Any]],
+    playback_text: str = "",
 ) -> AsyncIterator[str]:
     stream = agent.run(run_messages, stream=True)
     seen_tools: set[tuple[str, str]] = set()
@@ -230,6 +231,8 @@ async def _stream_agent(
         text_buffer.clear()
 
     materialize_control_scene_calls(final)
+    if playback_text:
+        ensure_playback_request(playback_text)
 
     text = (final.text or streamed_text or "").strip()
     if not text:
@@ -290,8 +293,14 @@ async def chat_stream(
     run_messages = [*framework_messages, *_context_messages(context, adjudicate=False)]
     pitch_token = bind_pitch_context((context or {}).get("pitch"))
     scene_token = bind_scene_actions()
+    playback_text = ""
+    if (context or {}).get("tab") == "pitch" and not (context or {}).get("minuteContext"):
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                playback_text = str(message.get("content") or "")
+                break
     try:
-        async for event in _stream_agent(agent, run_messages, []):
+        async for event in _stream_agent(agent, run_messages, [], playback_text):
             yield event
     except (RuntimeError, ValueError) as error:
         yield format_sse("error", {"message": str(error)})

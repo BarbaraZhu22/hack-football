@@ -410,6 +410,15 @@ export default function PitchTab() {
       run([{ type: "incident.seek", time: boundedTime }]);
     }
   }, [isOffside, run, simulation.duration]);
+
+  const playbackSeqRef = useRef(0);
+  useEffect(() => {
+    const playback = state.playback;
+    if (!playback || playback.seq === playbackSeqRef.current) return;
+    playbackSeqRef.current = playback.seq;
+    if (Number.isFinite(playback.time)) seek(playback.time);
+    setPlaying(Boolean(playback.playing));
+  }, [seek, state.playback]);
   playbackRef.current = { isOffside, rate, duration: simulation.duration };
 
   useEffect(() => {

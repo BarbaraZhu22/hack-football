@@ -34,6 +34,11 @@ function createInitialSceneState() {
       forces: true,
       dual: true,
     },
+    playback: {
+      playing: false,
+      time: null,
+      seq: 0,
+    },
   };
 }
 
@@ -98,6 +103,18 @@ export function applySceneAction(state, action) {
       };
     case "incident.seek":
       return withIncidentFrame(state, action.time);
+    case "incident.playback": {
+      const hasTime = Number.isFinite(Number(action.time));
+      const next = hasTime ? withIncidentFrame(state, action.time) : state;
+      return {
+        ...next,
+        playback: {
+          playing: Boolean(action.playing),
+          time: hasTime ? Number(action.time) : null,
+          seq: (state.playback?.seq ?? 0) + 1,
+        },
+      };
+    }
     case "pitch.overlay.set":
       if (!Object.hasOwn(state.overlays, action.key)) return state;
       return {
@@ -112,6 +129,48 @@ export function applySceneAction(state, action) {
     default:
       return state;
   }
+}
+
+export function actionsFromPlaybackText(text) {
+  const source = String(text || "");
+  const timed = source.match(/(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/i)
+    || source.match(/\b(?:play|resume|seek|jump|scrub|go to)\s+(\d+(?:\.\d+)?)/i);
+  const seconds = timed ? Number(timed[1]) : null;
+  const hasTime = Number.isFinite(seconds);
+  if (/\b(play|resume)\b/i.test(source)) {
+    if (!hasTime) return [{ type: "incident.playback", playing: true }];
+    return [
+      { type: "incident.seek", time: seconds },
+      { type: "incident.playback", playing: true, time: seconds },
+    ];
+  }
+  if (/\b(seek|jump|scrub|go to)\b/i.test(source) && hasTime) {
+    return [{ type: "incident.seek", time: seconds }];
+  }
+  if (/\b(pause|stop)\b/i.test(source)) {
+    return [{ type: "incident.playback", playing: false }];
+  }
+  return [];
+}
+
+export function actionsFromControlScene(input = {}) {
+  const command = String(input.command || "").trim().toLowerCase();
+  const time = Number(input.time_seconds);
+  const hasTime = Number.isFinite(time) && time >= 0;
+  if (command === "play" || command === "resume") {
+    if (!hasTime) return [{ type: "incident.playback", playing: true }];
+    return [
+      { type: "incident.seek", time },
+      { type: "incident.playback", playing: true, time },
+    ];
+  }
+  if (command === "pause" || command === "stop") {
+    return [{ type: "incident.playback", playing: false }];
+  }
+  if (command === "seek" && hasTime) {
+    return [{ type: "incident.seek", time }];
+  }
+  return [];
 }
 
 export function applySceneActions(state, actions) {
