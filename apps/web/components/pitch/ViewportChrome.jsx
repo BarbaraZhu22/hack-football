@@ -41,9 +41,6 @@ export default function ViewportChrome({
   parts,
 }) {
   const offside = sim.kind === "offside";
-  const frozen = offside
-    ? time >= sim.contactT
-    : Math.abs(time - sim.contactT) < 0.035;
 
   return (
     <>
@@ -109,13 +106,6 @@ export default function ViewportChrome({
       {parts.contact && <ContactEnvelope sim={sim} />}
 
       {parts.minimap && <Minimap sim={sim} time={time} preset={cameraPreset} />}
-
-      {parts.freeze && frozen && (
-        <div className={styles.freezeBadge}>
-          <span className={styles.freezeBars}><i /><i /><i /></span>
-          {offside ? "PASS RELEASE" : "FRAME HELD"} · 100 FPS
-        </div>
-      )}
 
       {parts.frameCorners && <div className={styles.frameCorners}><i /><i /><i /><i /></div>}
       {parts.vignette && <div className={styles.stageVignette} />}

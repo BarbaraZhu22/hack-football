@@ -3,7 +3,7 @@ export const MATCH = {
     round: 'Matchweek 29',
     home: { code: 'MCI', name: 'Manchester City', color: '#6CABDD', text: '#0b2132' },
     away: { code: 'ARS', name: 'Arsenal', color: '#EF0107', text: '#ffffff' },
-    score: [2, 1],
+    score: [1, 1],
     clock: '78:32',
     stadium: 'Etihad Stadium',
     attendance: '54,118',

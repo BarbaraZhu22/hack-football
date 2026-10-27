@@ -22,16 +22,29 @@ import {
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const smooth = (t) => t * t * (3 - 2 * t);
 const KICK_CONTACT_SPEED_MULTIPLIER = 1.95;
+const OFFSIDE_LINE_PARTS = [
+  ["head", 0.12],
+  ["chest", 0.15],
+  ["pelvis", 0.14],
+  ["thighL", 0.09],
+  ["thighR", 0.09],
+  ["calfL", 0.07],
+  ["calfR", 0.07],
+  ["footL", 0.06],
+  ["footR", 0.06],
+  ["toeL", 0.035],
+  ["toeR", 0.035],
+];
 
-function carryBallPosition(sim, time) {
-  const frame = sampleOffsideFrame(sim, clamp(time, 0, sim.contactT));
+function carryBallPosition(sim, time, target = new THREE.Vector3(), frameBuffer) {
+  const frame = sampleOffsideFrame(sim, clamp(time, 0, sim.contactT), frameBuffer);
   const lead = 0.25 + 0.14 * smooth(clamp(time / sim.contactT, 0, 1));
-  return new THREE.Vector3(frame.passer.x - 0.2, 0.12, frame.passer.z + lead);
+  return target.set(frame.passer.x - 0.2, 0.12, frame.passer.z + lead);
 }
 
-function applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlayer }) {
+function applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer, sampledFrame }) {
   const poseTime = clamp(time, 0, sim.contactT);
-  const frame = sampleOffsideFrame(sim, poseTime);
+  const frame = sampledFrame ?? sampleOffsideFrame(sim, poseTime);
   const actor = frame[role];
   actorGroup.position.set(actor.x, 0, actor.z);
   actorGroup.rotation.set(0, actor.yaw, 0);
@@ -41,11 +54,9 @@ function applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlay
   retargetRun(runPlayer, rig);
 
   if (role === "passer" && passPlayer && poseTime >= sim.passStartT) {
-    const runPose = [];
-    rig.model.traverse((object) => {
-      if (object.isBone) runPose.push({ bone: object, quaternion: object.quaternion.clone() });
-    });
-    const runPelvisPosition = rig.bones.pelvis.position.clone();
+    const runPose = poseBuffer.bones;
+    for (const item of runPose) item.quaternion.copy(item.bone.quaternion);
+    const runPelvisPosition = poseBuffer.pelvisPosition.copy(rig.bones.pelvis.position);
     const localPassTime = clamp(poseTime - sim.passStartT, 0, sim.passLocalReleaseT);
     setRunTime(passPlayer, localPassTime);
     retargetRun(passPlayer, rig);
@@ -69,7 +80,7 @@ function sampleKickBallAtTime(time, options) {
   return ball;
 }
 
-function sampleToeAtTime(time, { sim, actorGroup, rig, runPlayer, passPlayer, role }) {
+function sampleToeAtTime(time, { sim, actorGroup, rig, runPlayer, passPlayer, role, poseBuffer }) {
   const savedPosition = actorGroup.position.clone();
   const savedQuaternion = actorGroup.quaternion.clone();
   const savedBones = [];
@@ -81,7 +92,7 @@ function sampleToeAtTime(time, { sim, actorGroup, rig, runPlayer, passPlayer, ro
     });
   });
 
-  applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlayer });
+  applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer });
   const toe = new THREE.Vector3();
   (rig.bones.toeR ?? rig.bones.footR)?.getWorldPosition(toe);
 
@@ -162,28 +173,6 @@ function makeShadowTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
-function findKneeSurfaceVertices(rig) {
-  const kneePoints = [new THREE.Vector3(), new THREE.Vector3()];
-  rig.bones.calfL?.getWorldPosition(kneePoints[0]);
-  rig.bones.calfR?.getWorldPosition(kneePoints[1]);
-  const candidates = [[], []];
-  const localPoint = new THREE.Vector3();
-  rig.model.traverse((object) => {
-    if (!object.isSkinnedMesh) return;
-    const count = object.geometry.getAttribute("position")?.count ?? 0;
-    for (let i = 0; i < count; i += 1) {
-      object.getVertexPosition(i, localPoint);
-      object.localToWorld(localPoint);
-      for (let side = 0; side < 2; side += 1) {
-        if (localPoint.distanceToSquared(kneePoints[side]) < 0.18 ** 2) {
-          candidates[side].push({ mesh: object, index: i });
-        }
-      }
-    }
-  });
-  return candidates;
-}
-
 export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabels, lineRef, ballStateRef }) {
   const gltf = useLoader(GLTFLoader, getBodyModelUrl());
   const runGltf = useLoader(GLTFLoader, getClipUrl("run"));
@@ -203,13 +192,37 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
   const rigRef = useRef(null);
   const shadowRef = useRef(null);
   const skeletonRef = useRef(null);
-  const kneeVerticesRef = useRef([[], []]);
+  const poseBufferRef = useRef(null);
+  const lineBonesRef = useRef([]);
+  const linePointsRef = useRef([]);
+  const lineForwardRef = useRef(new THREE.Vector3());
+  const headWorldRef = useRef(new THREE.Vector3());
+  const sampledFrameRef = useRef({});
+  const ballFrameRef = useRef({});
+  const lastPoseTimeRef = useRef(Number.NaN);
+  const ballScratchRef = useRef({
+    toe: new THREE.Vector3(),
+    forward: new THREE.Vector3(),
+    kickBall: new THREE.Vector3(),
+    dribbleBall: new THREE.Vector3(),
+    ballPosition: new THREE.Vector3(),
+  });
 
   useLayoutEffect(() => {
     if (!group.current) return undefined;
     const rig = buildRig(group.current, prepared.scene);
     rigRef.current = rig;
-    kneeVerticesRef.current = findKneeSurfaceVertices(rig);
+    const poseBones = [];
+    rig.model.traverse((object) => {
+      if (object.isBone) poseBones.push({ bone: object, quaternion: new THREE.Quaternion() });
+    });
+    poseBufferRef.current = { bones: poseBones, pelvisPosition: new THREE.Vector3() };
+    if (role === "defender") {
+      lineBonesRef.current = OFFSIDE_LINE_PARTS
+        .map(([key, extent]) => rig.bones[key] ? { bone: rig.bones[key], extent } : null)
+        .filter(Boolean);
+      linePointsRef.current = lineBonesRef.current.map(() => new THREE.Vector3());
+    }
     const skeleton = buildSkeletonOverlay();
     skeleton.group.visible = false;
     skeleton.group.layers.mask = group.current.layers.mask;
@@ -236,49 +249,46 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
     if (!rig || !actorGroup) return;
 
     const time = timeRef.current;
+    if (time === lastPoseTimeRef.current) return;
+    lastPoseTimeRef.current = time;
     const poseTime = Math.min(time, sim.contactT);
-    const frame = sampleOffsideFrame(sim, poseTime);
-    applyPoseAtTime({ sim, time: poseTime, role, actorGroup, rig, runPlayer, passPlayer });
+    const frame = sampleOffsideFrame(sim, poseTime, sampledFrameRef.current);
+    applyPoseAtTime({ sim, time: poseTime, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer: poseBufferRef.current, sampledFrame: frame });
 
     if (role === "defender" && lineRef?.current) {
-      const vertexPosition = new THREE.Vector3();
-      let leadingKneeZ = -Infinity;
-      for (const sideVertices of kneeVerticesRef.current) {
-        for (const candidate of sideVertices) {
-          candidate.mesh.getVertexPosition(candidate.index, vertexPosition);
-          candidate.mesh.localToWorld(vertexPosition);
-          leadingKneeZ = Math.max(leadingKneeZ, vertexPosition.z);
-        }
+      const forward = actorGroup.getWorldDirection(lineForwardRef.current);
+      let leadingBodyZ = -Infinity;
+      const lineBones = lineBonesRef.current;
+      const linePoints = linePointsRef.current;
+      for (let index = 0; index < lineBones.length; index += 1) {
+        const part = lineBones[index];
+        const point = part.bone.getWorldPosition(linePoints[index]);
+        leadingBodyZ = Math.max(leadingBodyZ, point.z + part.extent * forward.z);
       }
-      if (!Number.isFinite(leadingKneeZ)) {
-        const kneeL = new THREE.Vector3();
-        const kneeR = new THREE.Vector3();
-        rig.bones.calfL?.getWorldPosition(kneeL);
-        rig.bones.calfR?.getWorldPosition(kneeR);
-        leadingKneeZ = Math.max(kneeL.z, kneeR.z) + 0.08;
-      }
-      lineRef.current.z = leadingKneeZ;
-      sim.offside.lineZ = leadingKneeZ;
-      sim.offside.receiverMargin = frame.receiver.z + 0.24 - leadingKneeZ;
+      const ballZ = Math.max(sim.offside.ballZ, ballStateRef?.current?.position?.z ?? -Infinity);
+      const lineZ = Math.max(ballZ, leadingBodyZ);
+      lineRef.current.z = lineZ;
+      sim.offside.lineZ = lineZ;
+      sim.offside.receiverMargin = frame.receiver.z + 0.24 - lineZ;
       sim.offside.receiverAhead = sim.offside.receiverMargin > 0;
     }
 
     if (role === "passer" && ballStateRef?.current) {
       const state = ballStateRef.current;
-      const toe = new THREE.Vector3();
+      const { toe, forward, kickBall, dribbleBall, ballPosition } = ballScratchRef.current;
       (rig.bones.toeR ?? rig.bones.footR)?.getWorldPosition(toe);
-      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(actorGroup.quaternion);
-      const kickBall = toe.addScaledVector(forward, 0.11);
+      forward.set(0, 0, 1).applyQuaternion(actorGroup.quaternion);
+      kickBall.copy(toe).addScaledVector(forward, 0.11);
       kickBall.y = Math.max(0.115, kickBall.y + 0.035);
-      const dribbleBall = carryBallPosition(sim, poseTime);
+      carryBallPosition(sim, poseTime, dribbleBall, ballFrameRef.current);
       const contactTravelDuration = 0.16;
       const contactProgress = clamp((poseTime - (sim.contactT - contactTravelDuration)) / contactTravelDuration, 0, 1);
       const kickBlend = 1 - (1 - contactProgress) ** 3;
-      const forwardAlignment = kickBall.clone().sub(dribbleBall).dot(forward);
+      const forwardAlignment = ballPosition.copy(kickBall).sub(dribbleBall).dot(forward);
       // Keep the carry moving forward through contact, then let the foot guide the
       // ball a short distance forward and upward before the release frame freezes.
       const contactLead = clamp(forwardAlignment, 0, 0.38) * KICK_CONTACT_SPEED_MULTIPLIER;
-      const ballPosition = dribbleBall.addScaledVector(forward, contactLead * kickBlend);
+      ballPosition.copy(dribbleBall).addScaledVector(forward, contactLead * kickBlend);
       const contactLift = clamp(kickBall.y - dribbleBall.y, 0.16, 0.3) * KICK_CONTACT_SPEED_MULTIPLIER;
       ballPosition.y += contactLift * kickBlend;
       const previousTime = state.previousTime;
@@ -288,8 +298,8 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
         const velocityStep = 1 / 240;
         const beforeTime = Math.max(0, poseTime - velocityStep);
         const afterTime = Math.min(sim.contactT, poseTime + velocityStep);
-        const before = carryBallPosition(sim, beforeTime);
-        const after = carryBallPosition(sim, afterTime);
+        const before = carryBallPosition(sim, beforeTime, ballScratchRef.current.before ?? (ballScratchRef.current.before = new THREE.Vector3()), ballFrameRef.current);
+        const after = carryBallPosition(sim, afterTime, ballScratchRef.current.after ?? (ballScratchRef.current.after = new THREE.Vector3()), ballFrameRef.current);
         state.velocity.copy(after).sub(before).divideScalar(Math.max(1e-5, afterTime - beforeTime));
       }
       state.position.copy(ballPosition);
@@ -299,7 +309,7 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
         state.impulseMagnitude = 0;
       } else if (!state.released) {
         state.contactPosition.copy(ballPosition);
-        const sampleOptions = { sim, actorGroup, rig, runPlayer, passPlayer, role };
+        const sampleOptions = { sim, actorGroup, rig, runPlayer, passPlayer, role, poseBuffer: poseBufferRef.current };
         let footVelocity = new THREE.Vector3();
         if (state.previousTime !== null && poseTime > state.previousTime + 1e-5 && poseTime - state.previousTime < 0.08) {
           footVelocity.copy(kickBall).sub(state.previousKickPosition).divideScalar(poseTime - state.previousTime);
@@ -344,7 +354,7 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
     }
 
     if (rig.bones.head) {
-      const headPosition = new THREE.Vector3();
+      const headPosition = headWorldRef.current;
       rig.bones.head.getWorldPosition(headPosition);
       actorGroup.worldToLocal(headPosition);
       floatingLabel.position.set(headPosition.x, headPosition.y + 0.38, headPosition.z);
