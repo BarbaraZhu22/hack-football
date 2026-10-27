@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, CircleCheck, CircleHelp, CircleX, Scale } from "lucide-react";
 
 import { AgentConversation } from "@/components/chat/AgentChat";
@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ACTUAL_DECISION, CRITERIA } from "@/lib/incident";
 import { ADJUDICATOR_RESULT_CONTRACT, getAdjudicatorResultTemplate, getRecordedDecision } from "@/lib/adjudication";
 import { useIncidentReview } from "@/lib/incident-review-context";
+import { requestAdjudication } from "@/lib/match-ai";
 
 import { PRECEDENT_TYPES } from "@/lib/precedent-types";
 
@@ -247,7 +248,8 @@ function PrecedentCard({ precedent, adjudication }) {
 }
 
 export default function IncidentAgentPanel() {
-  const { review, adjudicatorResults = {} } = useIncidentReview();
+  const { review, adjudicatorResults = {}, setAdjudicatorResult } = useIncidentReview();
+  const adjudicationRequested = useRef(new Set());
   const [activeView, setActiveView] = useState("rules");
   const [precedentState, setPrecedentState] = useState({ incidentId: null, status: "idle", precedents: [], error: null });
   const decision = getRecordedDecision(review);
@@ -290,6 +292,28 @@ export default function IncidentAgentPanel() {
 
   const precedents = precedentState.incidentId === incidentId ? precedentState.precedents : [];
   const precedentStatus = precedentState.incidentId === incidentId ? precedentState.status : "loading";
+
+  useEffect(() => {
+    if (!incidentId || precedentStatus !== "ready") return;
+    if (adjudicationRequested.current.has(incidentId)) return;
+    adjudicationRequested.current.add(incidentId);
+    requestAdjudication({
+      incidentId,
+      incidentRegistryId: review?.incident?.id,
+      precedentTypes: incidentTypes,
+      precedentCaseIds: precedents.map((precedent) => precedent.caseId || precedent.id).filter(Boolean),
+      ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
+      recordedDecision: { label: decision.title, detail: decision.detail },
+      eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
+    })
+      .then((result) => {
+        const { toolCalls: _ignored, ...adjudicatorResult } = result;
+        setAdjudicatorResult(adjudicatorResult);
+      })
+      .catch(() => {
+        adjudicationRequested.current.delete(incidentId);
+      });
+  }, [incidentId, precedentStatus]);
   const resultTemplate = useMemo(
     () => getAdjudicatorResultTemplate(incidentId, criteria.map((criterion) => criterion.id), precedents.map((precedent) => precedent.caseId || precedent.id)),
     [incidentId, criteria, precedents],

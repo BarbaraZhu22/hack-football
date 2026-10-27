@@ -602,7 +602,6 @@ export default function OverviewTab() {
   const [currentFrame, setCurrentFrame] = useState(null);
   const receivedTickRef = useRef(false);
   const [liveTickEvents, setLiveTickEvents] = useState([]);
-  const [liveTickDecisions, setLiveTickDecisions] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -639,9 +638,6 @@ export default function OverviewTab() {
           setClock(tick.clock);
           if (Array.isArray(tick.events) && tick.events.length) {
             setLiveTickEvents(tick.events);
-          }
-          if (Array.isArray(tick.decisions) && tick.decisions.length) {
-            setLiveTickDecisions(tick.decisions);
           }
           setSnapshot((current) => current ? {
             ...current,
@@ -828,7 +824,6 @@ export default function OverviewTab() {
               decisions={decisions}
               match={match}
               liveTickEvents={liveTickEvents}
-              liveTickDecisions={liveTickDecisions}
             />
           </div>
         </div>

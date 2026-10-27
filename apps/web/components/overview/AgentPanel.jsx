@@ -92,14 +92,13 @@ export default function AgentPanel({
   decisions = [],
   match,
   liveTickEvents = [],
-  liveTickDecisions = [],
 }) {
   const [mode, setMode] = useState("live");
   const [minuteContext, setMinuteContext] = useState(null);
   const [assistantSeed, setAssistantSeed] = useState(null);
   const seededMomentsRef = useRef(new Set());
   const feedRef = useRef(null);
-  const { commentaryByEventId } = useMatchAgentFeed({ liveTickEvents, liveTickDecisions, match });
+  const { commentaryByEventId } = useMatchAgentFeed({ liveTickEvents, match });
   const [liveGeneratedIds, setLiveGeneratedIds] = useState(() => new Set());
 
   useEffect(() => {
@@ -147,10 +146,7 @@ export default function AgentPanel({
     setAssistantSeed({
       key: eventId,
       role: "user",
-      content:
-        `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `
-        + "Use search_rules and search_precedents, then state what share of similar historical cases "
-        + "would match your call (give a percentage and brief count if the tool results allow).",
+      content: `At ${clockLabel}, acting as the referee on this incident: what is your decision, and why in one sentence?`,
     });
   }
 
