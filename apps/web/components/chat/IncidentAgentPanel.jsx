@@ -307,6 +307,7 @@ function buildIncidentAdjudicationPayload({
   criteria,
   decision,
   currentEvent,
+  offsideAssessment,
 }) {
   return {
     incidentId,
@@ -315,6 +316,7 @@ function buildIncidentAdjudicationPayload({
     ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
     recordedDecision: { label: decision.title, detail: decision.detail },
     eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
+    ...(offsideAssessment ? { offsideAssessment } : {}),
   };
 }
 
@@ -387,6 +389,7 @@ export default function IncidentAgentPanel() {
       criteria,
       decision,
       currentEvent,
+      offsideAssessment: review?.incident?.id === "offside" ? review.assessment : null,
     });
 
     streamAdjudication(payload, (event, data) => {

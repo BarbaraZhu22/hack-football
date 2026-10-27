@@ -45,6 +45,7 @@ def pitch_snapshot_json() -> str:
         "incidentId": pitch.get("incidentId"),
         "incidentLabel": pitch.get("incidentLabel"),
         "contact": pitch.get("contact") or {},
+        "offside": pitch.get("offside") or {},
         "video": pitch.get("video") or {},
         "scene": pitch.get("scene") or {},
     }

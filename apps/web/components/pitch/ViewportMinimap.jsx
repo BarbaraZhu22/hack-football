@@ -87,7 +87,7 @@ export default function Minimap({ sim, time, variant = "viewport" }) {
   const passerY = passerPoint?.y ?? null;
   const ballX = ballMapPoint.x;
   const ballY = ballMapPoint.y;
-  const lineX = offside && time >= sim.contactT ? mz(-roundPitchCoordinate(sim.offside.lineZ)) : null;
+  const lineX = offside ? mz(-roundPitchCoordinate(sim.offside.lineZ)) : null;
   const nextFrame = offside
     ? sampleOffsideFrame(sim, Math.min(sim.duration, sampleTime + INCIDENT_TRACKING_SAMPLE_STEP))
     : sampleFrame(sim, Math.min(sim.duration, sampleTime + INCIDENT_TRACKING_SAMPLE_STEP));

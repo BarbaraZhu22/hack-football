@@ -1,7 +1,24 @@
 {
   "chatRequest": {
     "messages": [{ "role": "user|assistant|system", "content": "string" }],
-    "context": { "tab": "pitch|match|game|overview" }
+    "context": {
+      "tab": "pitch|match|game|overview",
+      "pitch": {
+        "offside": {
+          "reviewFrame": "current_playback_frame",
+          "assessment": {
+            "ballZ": "number",
+            "receiverLeadingPointZ": "number",
+            "secondLastOpponentZ": "number",
+            "lineZ": "number",
+            "receiverMargin": "number",
+            "receiverAhead": "boolean",
+            "measurementSource": "simulation_proxy|three_d_pose",
+            "reviewTimeSeconds": "number"
+          }
+        }
+      }
+    }
   },
   "chatResponse": {
     "message": { "role": "assistant", "content": "string" },

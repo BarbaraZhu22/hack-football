@@ -42,6 +42,7 @@ class AdjudicateRequest(BaseModel):
     decision: dict[str, Any] | None = None
     eventFacts: dict[str, Any] | None = None
     recordedDecision: dict[str, Any] | None = None
+    offsideAssessment: dict[str, Any] | None = None
 
 
 @router.post("/api/chat")
