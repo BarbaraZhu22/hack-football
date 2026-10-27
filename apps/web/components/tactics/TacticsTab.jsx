@@ -210,7 +210,6 @@ function drawAnimatedFootball(ctx, x, game, sprite, runSprite) {
   const runFrameWidth = runSprite?.naturalWidth ? runSprite.naturalWidth / 3 : 362;
   // The authored run strip keeps the approved stride and closed-foot pose, then reverses the arm and leg phase.
   const runFrame = Math.floor(((game.animationTime * 1.44) % 1) * 3);
-  const runFrameBottomGaps = [17, 36, 42];
 
   ctx.save();
   const shadowScale = Math.max(0.45, 1 - game.jumpHeight / 260);
@@ -240,7 +239,7 @@ function drawAnimatedFootball(ctx, x, game, sprite, runSprite) {
   if (runSprite?.complete && runSprite.naturalWidth > 0) {
     const frame = running ? runFrame : 1;
     const scale = runSize / runFrameWidth;
-    const runTop = GROUND_Y - runSize + runFrameBottomGaps[frame] * scale;
+    const runTop = GROUND_Y - runSize + 36 * scale;
     ctx.drawImage(
       runSprite,
       frame * runFrameWidth,
@@ -393,7 +392,7 @@ export default function TacticsTab() {
     runSprite.onload = () => {
       runSpriteRef.current = runSprite;
     };
-    runSprite.src = "/football-run-cycle.png";
+    runSprite.src = "/football-run-cycle-aligned.png";
 
     const resizeCanvas = () => {
       const bounds = canvas.getBoundingClientRect();
