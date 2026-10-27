@@ -238,8 +238,8 @@ function decisionDescription(decision) {
   }
 }
 
-function DecisionRow({ decision, assessment, hasNext }) {
-  const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
+function DecisionRow({ decision, assessment, hasNext, linkedIncident }) {
+  const incident = linkedIncident ?? (decision.incidentId ? getIncident(decision.incidentId) : null);
   const rating = RATINGS[{ correct: "green", questionable: "amber", controversial: "red" }[assessment]];
   const minuteLabel = (decision.minuteLabel || decision.minute) + "'";
   const description = decisionDescription(decision);
@@ -681,13 +681,30 @@ export default function OverviewTab() {
   const questionableDecisionIds = new Set(
     decisions.filter((decision) => decision.type === "questionable").map((decision) => decision.id),
   );
-  const reviewedIncidentIds = new Set();
+  const reviewIncidentByDecisionId = new Map();
+  const activeIncidentsById = new Map();
   for (const decision of decisions) {
     const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
-    if (incident?.status !== "active" || reviewedIncidentIds.has(incident.id)) continue;
-    reviewedIncidentIds.add(incident.id);
-    controversialDecisionIds.add(decision.id);
-    questionableDecisionIds.delete(decision.id);
+    if (incident?.status === "active" && !activeIncidentsById.has(incident.id)) {
+      activeIncidentsById.set(incident.id, { incident, sourceDecision: decision });
+    }
+  }
+  for (const { incident, sourceDecision } of activeIncidentsById.values()) {
+    const [incidentMinute, incidentSecond = 0] = incident.minute.split(":").map(Number);
+    const incidentTimeMs = (incidentMinute * 60 + incidentSecond) * 1000;
+    const cardDecision = decisions
+      .filter((decision) =>
+        ["yellow", "red"].includes(decision.decisionKind)
+        && Number(decision.minute) === incidentMinute,
+      )
+      .sort((left, right) =>
+        Math.abs(Number(left.timeMilliseconds ?? incidentTimeMs) - incidentTimeMs)
+        - Math.abs(Number(right.timeMilliseconds ?? incidentTimeMs) - incidentTimeMs),
+      )[0];
+    const reviewDecision = cardDecision || sourceDecision;
+    controversialDecisionIds.add(reviewDecision.id);
+    questionableDecisionIds.delete(reviewDecision.id);
+    reviewIncidentByDecisionId.set(reviewDecision.id, incident);
   }
   const decisionAssessment = (decision) =>
     controversialDecisionIds.has(decision.id)
@@ -773,6 +790,7 @@ export default function OverviewTab() {
                       decision={decision}
                       assessment={decisionAssessment(decision)}
                       hasNext={index < filteredDecisions.length - 1}
+                      linkedIncident={reviewIncidentByDecisionId.get(decision.id)}
                     />
                   ))}
                   {!filteredDecisions.length ? (

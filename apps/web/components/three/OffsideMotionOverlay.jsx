@@ -2,7 +2,7 @@
 
 import { CANVAS_FONT_FAMILY } from "@/lib/typography";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Line } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
@@ -96,29 +96,40 @@ function DynamicBallTrajectory({ sim, ballStateRef }) {
     depthWrite: false,
   }), []);
   const line = useMemo(() => new THREE.Line(geom, material), [geom, material]);
+  const pathStateRef = useRef("predicted");
+
+  useLayoutEffect(() => {
+    const attribute = geom.getAttribute("position");
+    predictedPath.forEach(([x, y, z], index) => attribute.setXYZ(index, x, y, z));
+    attribute.needsUpdate = true;
+    geom.setDrawRange(0, predictedPath.length);
+    geom.computeBoundingSphere();
+    line.computeLineDistances();
+  }, [geom, line, predictedPath]);
+
   useFrame(() => {
     const state = ballStateRef.current;
-    const points = state?.released
-      ? makeOffsideBallFlightPath(
-          state.contactPosition,
-          state.releaseVelocity,
-          OFFSIDE_PASS_FLIGHT_DURATION,
-          48,
-        )
-      : predictedPath;
+    if (!state?.released || pathStateRef.current === "released") return;
+    pathStateRef.current = "released";
+    const points = makeOffsideBallFlightPath(
+      state.contactPosition,
+      state.releaseVelocity,
+      OFFSIDE_PASS_FLIGHT_DURATION,
+      48,
+    );
     const attribute = geom.getAttribute("position");
     points.forEach(([x, y, z], index) => attribute.setXYZ(index, x, y, z));
     attribute.needsUpdate = true;
     geom.setDrawRange(0, points.length);
     geom.computeBoundingSphere();
     line.computeLineDistances();
-    line.layers.set(3);
   });
   return <primitive object={line} />;
 }
 
 export function OffsideMotionOverlay({ sim, timeRef, ballStateRef, showTrajectory, showForces }) {
   const annotationGroup = useRef(null);
+  const arrowDirectionsRef = useRef({ impulse: new THREE.Vector3(), velocity: new THREE.Vector3() });
   const impulseArrow = useMemo(() => makeArrow(0xffcf5c), []);
   const velocityArrow = useMemo(() => makeArrow(0xb9ffd9), []);
   const impulseLabel = useMemo(makeImpulseLabel, []);
@@ -154,17 +165,17 @@ export function OffsideMotionOverlay({ sim, timeRef, ballStateRef, showTrajector
     const impulseLength = THREE.MathUtils.clamp(state.impulseMagnitude * 0.28, 0.28, 1.5);
     const normal = state.impulseNormal;
     impulseArrow.position.set(start.x, start.y + 0.05, start.z);
-    impulseArrow.setDirection(new THREE.Vector3(normal.x, normal.y, normal.z).normalize());
+    impulseArrow.setDirection(arrowDirectionsRef.current.impulse.set(normal.x, normal.y, normal.z).normalize());
     impulseArrow.setLength(impulseLength, 0.19, 0.1);
 
     const velocity = state.releaseVelocity;
     const velocityLength = THREE.MathUtils.clamp(velocity.length() * 0.12, 0.36, 1.5);
     velocityArrow.position.set(start.x, start.y + 0.08, start.z);
-    velocityArrow.setDirection(velocity.clone().normalize());
+    velocityArrow.setDirection(arrowDirectionsRef.current.velocity.copy(velocity).normalize());
     velocityArrow.setLength(velocityLength, 0.17, 0.08);
     impulseLabel.position.set(start.x + 0.65, start.y + 0.68, start.z + 0.2);
-    const labelText = `IMPULSE ${state.impulseMagnitude.toFixed(1)} N·s · Δv ${(state.impulseMagnitude / 0.43).toFixed(1)} m/s · F̄ ${state.averageForce.toFixed(0)} N`;
-    if (impulseLabel.userData.currentText !== labelText) {
+    if (!impulseLabel.userData.currentText) {
+      const labelText = `IMPULSE ${state.impulseMagnitude.toFixed(1)} N·s · Δv ${(state.impulseMagnitude / 0.43).toFixed(1)} m/s · F̄ ${state.averageForce.toFixed(0)} N`;
       impulseLabel.userData.write(labelText);
       impulseLabel.userData.currentText = labelText;
     }

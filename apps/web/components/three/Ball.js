@@ -63,6 +63,9 @@ function makeBallTexture() {
 }
 export function Ball({ sim, timeRef, offset = [0, 0, 0], offsideBallRef }) {
     const mesh = useRef(null);
+    const sampledFrameRef = useRef({});
+    const lastFrameRef = useRef({ sim: null, time: Number.NaN });
+    const spinScratch = useMemo(() => ({ quaternion: new THREE.Quaternion(), euler: new THREE.Euler() }), []);
     const tex = useMemo(makeBallTexture, []);
     const mat = useMemo(() => new THREE.MeshStandardMaterial({
         map: tex,
@@ -73,6 +76,11 @@ export function Ball({ sim, timeRef, offset = [0, 0, 0], offsideBallRef }) {
     useFrame((_, delta) => {
         if (!mesh.current)
             return;
+        const time = timeRef.current;
+        if (lastFrameRef.current.sim === sim && lastFrameRef.current.time === time)
+            return;
+        lastFrameRef.current.sim = sim;
+        lastFrameRef.current.time = time;
         if (sim.kind === 'offside' && offsideBallRef?.current) {
             const state = offsideBallRef.current;
             const position = state.position;
@@ -80,11 +88,11 @@ export function Ball({ sim, timeRef, offset = [0, 0, 0], offsideBallRef }) {
             return;
         }
         const f = sim.kind === 'offside'
-            ? sampleOffsideFrame(sim, timeRef.current)
-            : sampleFrame(sim, timeRef.current);
+            ? sampleOffsideFrame(sim, time, sampledFrameRef.current)
+            : sampleFrame(sim, time, sampledFrameRef.current);
         const b = f.ball;
         mesh.current.position.set(b.p.x + offset[0], b.p.y + offset[1], b.p.z + offset[2]);
-        const spin = new THREE.Quaternion().setFromEuler(new THREE.Euler(-b.v.z * delta * 1.8, b.v.x * delta * 0.35, b.v.x * delta * 1.15));
+        const spin = spinScratch.quaternion.setFromEuler(spinScratch.euler.set(-b.v.z * delta * 1.8, b.v.x * delta * 0.35, b.v.x * delta * 1.15));
         mesh.current.quaternion.premultiply(spin);
     });
     return (_jsx("mesh", { ref: mesh, castShadow: true, receiveShadow: true, material: mat, children: _jsx("sphereGeometry", { args: [0.11, 40, 28] }) }));

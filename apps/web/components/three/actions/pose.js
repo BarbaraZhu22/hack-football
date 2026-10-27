@@ -62,14 +62,18 @@ export function buildRig(group, model) {
     }
     const restLocal = new Map();
     const restLocalPos = new Map();
+    const restTransforms = [];
     const restPos = new Map();
     const restWorldQ = new Map();
     const restDir = new Map();
     const actorQInv = new THREE.Quaternion();
     group.getWorldQuaternion(actorQInv).invert();
     for (const [name, b] of all) {
-        restLocal.set(name, b.quaternion.clone());
-        restLocalPos.set(name, b.position.clone());
+        const quaternion = b.quaternion.clone();
+        const position = b.position.clone();
+        restLocal.set(name, quaternion);
+        restLocalPos.set(name, position);
+        restTransforms.push({ bone: b, quaternion, position });
         const wp = new THREE.Vector3();
         b.getWorldPosition(wp);
         group.worldToLocal(wp);
@@ -97,17 +101,12 @@ export function buildRig(group, model) {
             lengths.set(key, a.distanceTo(b));
     }
     // capture rest positions of the joints for IK sizes
-    return { group, model, bones, restLocal, restLocalPos, restPos, restWorldQ, restDir, lengths };
+    return { group, model, bones, restLocal, restLocalPos, restTransforms, restPos, restWorldQ, restDir, lengths };
 }
 export function resetPose(rig) {
-    for (const [name, q] of rig.restLocal) {
-        const b = rig.model.getObjectByName(name);
-        if (b) {
-            b.quaternion.copy(q);
-            const lp = rig.restLocalPos.get(name);
-            if (lp)
-                b.position.copy(lp);
-        }
+    for (const { bone, quaternion, position } of rig.restTransforms) {
+        bone.quaternion.copy(quaternion);
+        bone.position.copy(position);
     }
     rig.group.updateMatrixWorld(true);
 }

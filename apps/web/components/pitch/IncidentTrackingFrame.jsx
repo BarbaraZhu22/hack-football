@@ -28,10 +28,32 @@ function clockQueryValue(totalSeconds) {
   return `${minute}:${String(wholeSeconds).padStart(2, "0")}.${String(fraction).padStart(3, "0")}`;
 }
 
-export default function IncidentTrackingFrame({ incident, simulation, time }) {
+export default function IncidentTrackingFrame({ incident, simulation, time, timeRef, playing }) {
   const incidentSecond = parseClockLabel(incident.trackingAnchor || incident.minute);
   const isReconstructed = incident.status === "active";
-  const targetSecond = Math.max(0, incidentSecond + (isReconstructed ? time - simulation.contactT : 0));
+  const [displayTime, setDisplayTime] = useState(time);
+
+  useEffect(() => {
+    if (!playing) {
+      setDisplayTime(time);
+      return undefined;
+    }
+
+    let request = 0;
+    let lastUpdate = 0;
+    const update = (now) => {
+      if (now - lastUpdate >= 1000 / 12) {
+        setDisplayTime(timeRef.current);
+        lastUpdate = now;
+      }
+      request = requestAnimationFrame(update);
+    };
+    request = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(request);
+  }, [playing, time, timeRef]);
+
+  const currentTime = playing ? displayTime : time;
+  const targetSecond = Math.max(0, incidentSecond + (isReconstructed ? currentTime - simulation.contactT : 0));
   const fromSecond = isReconstructed
     ? Math.max(0, incidentSecond - simulation.contactT - 0.01)
     : incidentSecond;

@@ -43,7 +43,6 @@
 .stageVignette,
 .stageGrain,
 .stageFooter,
-.freezeBadge,
 .insetFrame {
   pointer-events: none;
 }
@@ -143,11 +142,6 @@
 .insetCrosshair::before { top: -5px; left: 10px; width: 1px; height: 33px; }
 .insetCrosshair::after { top: 10px; left: -5px; width: 33px; height: 1px; }
 
-.freezeBadge { position: absolute; z-index: 4; bottom: 45px; left: 50%; display: flex; align-items: center; gap: 7px; padding: 5px 9px; transform: translateX(-50%); border: 1px solid rgba(255,209,102,.3); border-radius: 3px; background: rgba(13,18,12,.7); backdrop-filter: blur(8px); color: var(--stage-yellow); font-family: var(--stage-mono); font-size: 7px; letter-spacing: .12em; }
-.freezeBars { display: flex; gap: 2px; }
-.freezeBars i { width: 2px; height: 8px; background: var(--stage-yellow); animation: freezePulse 1s infinite alternate; }
-.freezeBars i:nth-child(2) { animation-delay: .2s; }
-.freezeBars i:nth-child(3) { animation-delay: .4s; }
 .frameCorners i { position: absolute; z-index: 3; width: 17px; height: 17px; border-color: rgba(221,244,234,.25); border-style: solid; }
 .frameCorners i:nth-child(1) { top: 8px; left: 8px; border-width: 1px 0 0 1px; }
 .frameCorners i:nth-child(2) { top: 8px; right: 8px; border-width: 1px 1px 0 0; }
@@ -173,7 +167,6 @@
 .eyebrow { color: #a51c2f; font-family: var(--stage-mono, ui-monospace, monospace); font-size: 8px; font-weight: 600; letter-spacing: .14em; }
 
 @keyframes pulseSoft { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
-@keyframes freezePulse { from { opacity: .35; } to { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1280px) {

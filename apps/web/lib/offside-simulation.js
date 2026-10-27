@@ -1,5 +1,11 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
+function mixActorInto(target, left, right, amount) {
+  target.x = lerp(left.x, right.x, amount);
+  target.z = lerp(left.z, right.z, amount);
+  target.yaw = lerp(left.yaw, right.yaw, amount);
+  target.speed = lerp(left.speed, right.speed, amount);
+}
 
 const DT = 1 / 120;
 const PASS_START = 0.5;
@@ -132,7 +138,7 @@ export function buildOffsideSimulation() {
   };
 }
 
-export function sampleOffsideFrame(sim, time) {
+export function sampleOffsideFrame(sim, time, out) {
   const t = clamp(Number(time) || 0, 0, sim.duration);
   const cursor = t / DT;
   const i0 = Math.floor(cursor);
@@ -142,26 +148,17 @@ export function sampleOffsideFrame(sim, time) {
   const b = sim.frames[i1];
   if (i0 === i1) return a;
 
-  const mixActor = (left, right) => ({
-    ...left,
-    x: lerp(left.x, right.x, k),
-    z: lerp(left.z, right.z, k),
-    yaw: lerp(left.yaw, right.yaw, k),
-    speed: lerp(left.speed, right.speed, k),
-  });
-  return {
-    t,
-    passer: mixActor(a.passer, b.passer),
-    receiver: mixActor(a.receiver, b.receiver),
-    defender: mixActor(a.defender, b.defender),
-    goalkeeper: mixActor(a.goalkeeper, b.goalkeeper),
-    ball: {
-      p: {
-        x: lerp(a.ball.p.x, b.ball.p.x, k),
-        y: lerp(a.ball.p.y, b.ball.p.y, k),
-        z: lerp(a.ball.p.z, b.ball.p.z, k),
-      },
-      v: a.ball.v,
-    },
-  };
+  const frame = out ?? {};
+  frame.t = t;
+  mixActorInto(frame.passer ?? (frame.passer = {}), a.passer, b.passer, k);
+  mixActorInto(frame.receiver ?? (frame.receiver = {}), a.receiver, b.receiver, k);
+  mixActorInto(frame.defender ?? (frame.defender = {}), a.defender, b.defender, k);
+  mixActorInto(frame.goalkeeper ?? (frame.goalkeeper = {}), a.goalkeeper, b.goalkeeper, k);
+  const ball = frame.ball ?? (frame.ball = { p: {}, v: null });
+  const position = ball.p ?? (ball.p = {});
+  position.x = lerp(a.ball.p.x, b.ball.p.x, k);
+  position.y = lerp(a.ball.p.y, b.ball.p.y, k);
+  position.z = lerp(a.ball.p.z, b.ball.p.z, k);
+  ball.v = a.ball.v;
+  return frame;
 }

@@ -372,7 +372,7 @@ export default function IncidentAgentPanel() {
     <Card className="flex h-full min-h-0 flex-col overflow-hidden">
       <CardHeader className="shrink-0 border-b py-3">
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="shrink-0 whitespace-nowrap">Incident Agent</CardTitle>
+          <CardTitle className="shrink-0 whitespace-nowrap">Agent</CardTitle>
           <div className="inline-flex shrink-0 rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Incident review view">
             <Button
               type="button"

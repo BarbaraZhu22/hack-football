@@ -32,6 +32,7 @@ function makeTextSprite(text, color = '#fff7d6') {
     return s;
 }
 function DynamicTrail({ sim, timeRef, role, color, }) {
+    const sampledFrameRef = useRef({});
     const geom = useMemo(() => {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(80 * 3), 3));
@@ -40,7 +41,7 @@ function DynamicTrail({ sim, timeRef, role, color, }) {
     const mat = useMemo(() => new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75, depthWrite: false }), [color]);
     const line = useMemo(() => new THREE.Line(geom, mat), [geom, mat]);
     useFrame(() => {
-        const f = sampleFrame(sim, timeRef.current);
+        const f = sampleFrame(sim, timeRef.current, sampledFrameRef.current);
         const trail = role === 'tackler' ? f.aTrail : f.bTrail;
         const arr = geom.getAttribute('position');
         const n = Math.min(trail.length, 80);

@@ -1,5 +1,12 @@
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+const mixVector = (target, p, q, t) => {
+    const vector = target ?? {};
+    vector.x = lerp(p.x, q.x, t);
+    vector.y = lerp(p.y, q.y, t);
+    vector.z = lerp(p.z, q.z, t);
+    return vector;
+};
 const smooth = (t) => t * t * (3 - 2 * t);
 const norm = (v) => {
     const l = Math.hypot(v.x, v.y, v.z) || 1;
@@ -405,7 +412,7 @@ export function buildSimulation() {
         },
     };
 }
-export function sampleFrame(sim, time) {
+export function sampleFrame(sim, time, out) {
     const t = clamp(time, 0, sim.duration);
     const f = t / dt;
     const i0 = Math.floor(f);
@@ -415,45 +422,50 @@ export function sampleFrame(sim, time) {
     const b = sim.frames[i1];
     if (i0 === i1)
         return a;
-    const mix = (p, q) => p + (q - p) * k;
-    const mixV = (p, q) => ({ x: mix(p.x, q.x), y: mix(p.y, q.y), z: mix(p.z, q.z) });
-    return {
-        t,
-        tackler: {
-            ...a.tackler,
-            x: mix(a.tackler.x, b.tackler.x),
-            z: mix(a.tackler.z, b.tackler.z),
-            yaw: mix(a.tackler.yaw, b.tackler.yaw),
-            speed: mix(a.tackler.speed, b.tackler.speed),
-            pitch: mix(a.tackler.pitch, b.tackler.pitch),
-            roll: mix(a.tackler.roll, b.tackler.roll),
-            comY: mix(a.tackler.comY, b.tackler.comY),
-            stride: mix(a.tackler.stride, b.tackler.stride),
-            leadFoot: mixV(a.tackler.leadFoot, b.tackler.leadFoot),
-            trailFoot: mixV(a.tackler.trailFoot, b.tackler.trailFoot),
-        },
-        carrier: {
-            ...a.carrier,
-            x: mix(a.carrier.x, b.carrier.x),
-            z: mix(a.carrier.z, b.carrier.z),
-            yaw: mix(a.carrier.yaw, b.carrier.yaw),
-            speed: mix(a.carrier.speed, b.carrier.speed),
-            pitch: mix(a.carrier.pitch, b.carrier.pitch),
-            roll: mix(a.carrier.roll, b.carrier.roll),
-            comY: mix(a.carrier.comY, b.carrier.comY),
-            brace: mix(a.carrier.brace, b.carrier.brace),
-            stride: mix(a.carrier.stride, b.carrier.stride),
-            leadFoot: mixV(a.carrier.leadFoot, b.carrier.leadFoot),
-            trailFoot: mixV(a.carrier.trailFoot, b.carrier.trailFoot),
-        },
-        ball: {
-            ...b.ball,
-            p: mixV(a.ball.p, b.ball.p),
-            v: mixV(a.ball.v, b.ball.v),
-            spin: mixV(a.ball.spin, b.ball.spin),
-        },
-        impact: a.impact ?? b.impact,
-        aTrail: a.aTrail,
-        bTrail: a.bTrail,
-    };
+    const frame = out ?? {};
+    frame.t = t;
+
+    const tackler = frame.tackler ?? (frame.tackler = {});
+    const tacklerLeadFoot = tackler.leadFoot ?? {};
+    const tacklerTrailFoot = tackler.trailFoot ?? {};
+    Object.assign(tackler, a.tackler);
+    tackler.x = lerp(a.tackler.x, b.tackler.x, k);
+    tackler.z = lerp(a.tackler.z, b.tackler.z, k);
+    tackler.yaw = lerp(a.tackler.yaw, b.tackler.yaw, k);
+    tackler.speed = lerp(a.tackler.speed, b.tackler.speed, k);
+    tackler.pitch = lerp(a.tackler.pitch, b.tackler.pitch, k);
+    tackler.roll = lerp(a.tackler.roll, b.tackler.roll, k);
+    tackler.comY = lerp(a.tackler.comY, b.tackler.comY, k);
+    tackler.stride = lerp(a.tackler.stride, b.tackler.stride, k);
+    tackler.leadFoot = mixVector(tacklerLeadFoot, a.tackler.leadFoot, b.tackler.leadFoot, k);
+    tackler.trailFoot = mixVector(tacklerTrailFoot, a.tackler.trailFoot, b.tackler.trailFoot, k);
+
+    const carrier = frame.carrier ?? (frame.carrier = {});
+    const carrierLeadFoot = carrier.leadFoot ?? {};
+    const carrierTrailFoot = carrier.trailFoot ?? {};
+    Object.assign(carrier, a.carrier);
+    carrier.x = lerp(a.carrier.x, b.carrier.x, k);
+    carrier.z = lerp(a.carrier.z, b.carrier.z, k);
+    carrier.yaw = lerp(a.carrier.yaw, b.carrier.yaw, k);
+    carrier.speed = lerp(a.carrier.speed, b.carrier.speed, k);
+    carrier.pitch = lerp(a.carrier.pitch, b.carrier.pitch, k);
+    carrier.roll = lerp(a.carrier.roll, b.carrier.roll, k);
+    carrier.comY = lerp(a.carrier.comY, b.carrier.comY, k);
+    carrier.brace = lerp(a.carrier.brace, b.carrier.brace, k);
+    carrier.stride = lerp(a.carrier.stride, b.carrier.stride, k);
+    carrier.leadFoot = mixVector(carrierLeadFoot, a.carrier.leadFoot, b.carrier.leadFoot, k);
+    carrier.trailFoot = mixVector(carrierTrailFoot, a.carrier.trailFoot, b.carrier.trailFoot, k);
+
+    const ball = frame.ball ?? (frame.ball = {});
+    const ballPosition = ball.p ?? {};
+    const ballVelocity = ball.v ?? {};
+    const ballSpin = ball.spin ?? {};
+    Object.assign(ball, b.ball);
+    ball.p = mixVector(ballPosition, a.ball.p, b.ball.p, k);
+    ball.v = mixVector(ballVelocity, a.ball.v, b.ball.v, k);
+    ball.spin = mixVector(ballSpin, a.ball.spin, b.ball.spin, k);
+    frame.impact = a.impact ?? b.impact;
+    frame.aTrail = a.aTrail;
+    frame.bTrail = a.bTrail;
+    return frame;
 }

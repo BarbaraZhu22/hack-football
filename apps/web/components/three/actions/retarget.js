@@ -60,13 +60,14 @@ const _b = new THREE.Quaternion();
 const _c = new THREE.Quaternion();
 const _d = new THREE.Quaternion();
 const _av = new THREE.Quaternion();
+const _hipDelta = new THREE.Vector3();
 export function retargetRun(player, rig) {
     resetPose(rig);
     const hip = player.bones.get('hips');
     const pelvis = rig.bones.pelvis;
     if (hip && pelvis) {
         const dy = (hip.position.y - player.restHipY) * player.hipScale;
-        translateActor(rig, pelvis, new THREE.Vector3(0, THREE.MathUtils.clamp(dy, -0.6, 0.6), 0));
+        translateActor(rig, pelvis, _hipDelta.set(0, THREE.MathUtils.clamp(dy, -0.6, 0.6), 0));
     }
     rig.group.updateMatrixWorld(true);
     rig.group.getWorldQuaternion(_a);

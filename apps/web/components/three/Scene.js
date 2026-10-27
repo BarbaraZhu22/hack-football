@@ -37,6 +37,23 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
     const { gl, scene, camera, size } = useThree();
     const controls = useRef(null);
     const hasReportedFirstFrame = useRef(false);
+    const liveFrameRef = useRef({});
+    const contactFrameRef = useRef({});
+    const reverseFrameRef = useRef({});
+    const cameraVectors = useMemo(() => ({
+        lookAt: new THREE.Vector3(),
+        target: new THREE.Vector3(),
+        position: new THREE.Vector3(),
+        varTarget: new THREE.Vector3(),
+        varPosition: new THREE.Vector3(),
+        focusNow: new THREE.Vector3(),
+        focusContact: new THREE.Vector3(),
+        pan: new THREE.Vector3(),
+        anchorShift: new THREE.Vector3(),
+        goalPos: new THREE.Vector3(),
+        goalTarget: new THREE.Vector3(),
+        viewDir: new THREE.Vector3(),
+    }), []);
     const isOffside = sim.kind === 'offside';
     const offsideLineRef = useRef(null);
     const offsideBallRef = useRef(null);
@@ -84,23 +101,24 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
         gl.setClearColor(BG);
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.08;
+        gl.shadowMap.enabled = !contactView;
         gl.shadowMap.type = THREE.PCFShadowMap;
-    }, [gl]);
+    }, [contactView, gl]);
     useFrame((_, dt) => {
         if (!(camera instanceof THREE.PerspectiveCamera))
             return;
         if (contactView) {
             if (isOffside) {
-                const frame = sampleOffsideFrame(sim, timeRef.current);
+                const frame = sampleOffsideFrame(sim, timeRef.current, liveFrameRef.current);
                 const focusX = (frame.receiver.x + frame.defender.x) / 2;
                 const focusZ = (frame.passer.z + frame.receiver.z + frame.defender.z) / 3;
                 camera.position.set(focusX + 17, 5, focusZ - 8);
-                camera.lookAt(new THREE.Vector3(focusX, 1.15, focusZ));
+                camera.lookAt(cameraVectors.lookAt.set(focusX, 1.15, focusZ));
                 camera.fov = 30;
             }
             else {
                 camera.position.set(32.4, 1.35, 8.1);
-                camera.lookAt(new THREE.Vector3(27.7, 0.55, 10.3));
+                camera.lookAt(cameraVectors.lookAt.set(27.7, 0.55, 10.3));
                 camera.fov = 34;
             }
             camera.updateProjectionMatrix();
@@ -150,11 +168,12 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
                 controls.current.maxDistance = 45;
             }
             if (isOffside && cameraPreset === 'broadcast') {
-                const frame = sampleOffsideFrame(sim, timeRef.current);
+                const frame = sampleOffsideFrame(sim, timeRef.current, liveFrameRef.current);
                 const focusX = (frame.receiver.x + frame.defender.x) / 2;
                 const focusZ = (frame.passer.z + frame.receiver.z + frame.defender.z) / 3;
-                let target = new THREE.Vector3(focusX, 1.15, focusZ);
-                let position = new THREE.Vector3(focusX - 17, 5, focusZ + 8);
+                const { target, position, varTarget, varPosition } = cameraVectors;
+                target.set(focusX, 1.15, focusZ);
+                position.set(focusX - 17, 5, focusZ + 8);
                 let fov = 30;
                 const review = offsideCameraRef.current;
                 if (timeRef.current >= sim.contactT) {
@@ -168,10 +187,10 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
                     const transitionProgress = THREE.MathUtils.clamp((now - review.contactWallTime - 1) / 1.8, 0, 1);
                     const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
                     const lineZ = offsideLineRef.current?.z ?? sim.offside.lineZ;
-                    const varTarget = new THREE.Vector3(focusX, 1.12, lineZ);
-                    const varPosition = new THREE.Vector3(focusX - 38, 6.3, lineZ + 2.2);
-                    target = review.startTarget.clone().lerp(varTarget, eased);
-                    position = review.startPosition.clone().lerp(varPosition, eased);
+                    varTarget.set(focusX, 1.12, lineZ);
+                    varPosition.set(focusX - 38, 6.3, lineZ + 2.2);
+                    target.copy(review.startTarget).lerp(varTarget, eased);
+                    position.copy(review.startPosition).lerp(varPosition, eased);
                     fov = THREE.MathUtils.lerp(review.startFov, 7.5, eased);
                 } else if (review) {
                     review.contactWallTime = null;
@@ -195,10 +214,10 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             // Broadcast cameras pan with the action; keep the calibration anchor fixed
             // at the contact frame so the investigative view is reproducible.
             const frame = isOffside
-                ? sampleOffsideFrame(sim, timeRef.current)
-                : sampleFrame(sim, timeRef.current);
+                ? sampleOffsideFrame(sim, timeRef.current, liveFrameRef.current)
+                : sampleFrame(sim, timeRef.current, liveFrameRef.current);
             const cf = isOffside
-                ? sampleOffsideFrame(sim, sim.contactT)
+                ? sampleOffsideFrame(sim, sim.contactT, contactFrameRef.current)
                 : sim.frames[Math.round(sim.contactT * 120)];
             const chasing = timeRef.current < sim.contactT - 0.08;
             const wA = chasing ? 0.58 : 0.5;
@@ -206,20 +225,21 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             const second = isOffside ? frame.receiver : frame.carrier;
             const contactFirst = isOffside ? cf.passer : cf.tackler;
             const contactSecond = isOffside ? cf.receiver : cf.carrier;
-            const focusNow = isOffside
-                ? new THREE.Vector3((frame.passer.x + frame.receiver.x + frame.defender.x) / 3, 0, (frame.passer.z + frame.receiver.z + frame.defender.z) / 3)
-                : new THREE.Vector3(first.x * wA + second.x * (1 - wA), 0, first.z * wA + second.z * (1 - wA));
-            const focusContact = isOffside
-                ? new THREE.Vector3((cf.passer.x + cf.receiver.x + cf.defender.x) / 3, 0, (cf.passer.z + cf.receiver.z + cf.defender.z) / 3)
-                : new THREE.Vector3((contactFirst.x + contactSecond.x) / 2, 0, (contactFirst.z + contactSecond.z) / 2);
-            const pan = focusNow.sub(focusContact);
+            const { focusNow, focusContact, pan, anchorShift, goalPos, goalTarget, viewDir } = cameraVectors;
+            if (isOffside) {
+                focusNow.set((frame.passer.x + frame.receiver.x + frame.defender.x) / 3, 0, (frame.passer.z + frame.receiver.z + frame.defender.z) / 3);
+                focusContact.set((cf.passer.x + cf.receiver.x + cf.defender.x) / 3, 0, (cf.passer.z + cf.receiver.z + cf.defender.z) / 3);
+            }
+            else {
+                focusNow.set(first.x * wA + second.x * (1 - wA), 0, first.z * wA + second.z * (1 - wA));
+                focusContact.set((contactFirst.x + contactSecond.x) / 2, 0, (contactFirst.z + contactSecond.z) / 2);
+            }
+            pan.copy(focusNow).sub(focusContact);
             pan.x = THREE.MathUtils.clamp(pan.x, -5.5, 5.5);
             pan.z = THREE.MathUtils.clamp(pan.z, -12.5, 6.5);
-            const anchorShift = isOffside
-                ? new THREE.Vector3(focusContact.x - 27.55, 0, focusContact.z - 10.0)
-                : new THREE.Vector3();
-            const goalPos = new THREE.Vector3(...p.pos).add(pan).add(anchorShift);
-            const goalTarget = new THREE.Vector3(...p.target).add(pan).add(anchorShift);
+            anchorShift.set(isOffside ? focusContact.x - 27.55 : 0, 0, isOffside ? focusContact.z - 10.0 : 0);
+            goalPos.fromArray(p.pos).add(pan).add(anchorShift);
+            goalTarget.fromArray(p.target).add(pan).add(anchorShift);
             const sinceContact = THREE.MathUtils.clamp((timeRef.current - sim.contactT) / 1.3, 0, 1);
             goalTarget.y += (0.62 - goalTarget.y) * sinceContact * 0.72;
             if (chasing)
@@ -232,7 +252,7 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
                 : Math.hypot(frame.tackler.x - frame.carrier.x, frame.tackler.z - frame.carrier.z);
             const maxPull = isOffside ? 14 : cameraPreset === 'touchline' || cameraPreset === 'referee' ? 6.2 : 4.4;
             const pullBack = THREE.MathUtils.clamp((separation - 1.1) * (isOffside ? 1.2 : 0.9), 0, maxPull);
-            const viewDir = goalPos.clone().sub(goalTarget).normalize();
+            viewDir.copy(goalPos).sub(goalTarget).normalize();
             goalPos.addScaledVector(viewDir, pullBack);
             camera.position.lerp(goalPos, k);
             camera.lookAt(goalTarget);
@@ -244,15 +264,15 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
         // Reverse-angle contact camera, synchronised to the same clock.
         contactCamera.aspect = 360 / 226;
         if (isOffside) {
-            const frame = sampleOffsideFrame(sim, timeRef.current);
+            const frame = sampleOffsideFrame(sim, timeRef.current, reverseFrameRef.current);
             const focusX = (frame.receiver.x + frame.defender.x) / 2;
             const focusZ = (frame.passer.z + frame.receiver.z + frame.defender.z) / 3;
             contactCamera.position.set(focusX + 17, 5, focusZ - 8);
-            contactCamera.lookAt(new THREE.Vector3(focusX, 1.15, focusZ));
+            contactCamera.lookAt(cameraVectors.lookAt.set(focusX, 1.15, focusZ));
             contactCamera.fov = 30;
         } else {
             contactCamera.position.set(32.4, 1.35, 8.1);
-            contactCamera.lookAt(new THREE.Vector3(27.7, 0.55, 10.3));
+            contactCamera.lookAt(cameraVectors.lookAt.set(27.7, 0.55, 10.3));
             contactCamera.fov = 34;
         }
         contactCamera.updateProjectionMatrix();
@@ -300,10 +320,10 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
             _jsx(OffsideMotionOverlay, { sim: sim, timeRef: timeRef, ballStateRef: offsideBallRef, showTrajectory: showTrajectory, showForces: showForces }),
         ] })
         : _jsx(MotionOverlay, { sim: sim, timeRef: timeRef, showForces: showForces, showTrajectory: showTrajectory });
-    return (_jsxs(_Fragment, { children: [_jsx("fogExp2", { attach: "fog", args: ['#071413', 0.0062] }), _jsx("hemisphereLight", { args: ['#cfe7ff', '#0b2a1d', 0.92] }), _jsx("directionalLight", { position: [42, 34, 18], intensity: 3.0, color: "#fff3db", castShadow: true, "shadow-mapSize-width": 2048, "shadow-mapSize-height": 2048, "shadow-camera-left": -28, "shadow-camera-right": 28, "shadow-camera-top": 28, "shadow-camera-bottom": -28, "shadow-camera-near": 1, "shadow-camera-far": 90, "shadow-bias": -0.00025, "shadow-normalBias": 0.035 }), _jsx("directionalLight", { position: [-24, 18, -12], intensity: 1.15, color: "#5bb6ff" }), _jsx("directionalLight", { position: [18, 8, 30], intensity: 0.85, color: "#ffb66e" }), _jsx("spotLight", { position: [34, 22, 8], angle: 0.75, penumbra: 0.85, intensity: 100, color: "#e4f5ff", distance: 80 }), _jsx(Pitch, {}), actors, _jsx(Ball, { sim: sim, timeRef: timeRef, offsideBallRef: isOffside ? offsideBallRef : null }), markings, _jsx(OrbitControls, { ref: controls, makeDefault: true, enabled: cameraPreset === 'free', enablePan: false, target: [27.35, 0.78, 10.25], enableDamping: true, dampingFactor: 0.06, minDistance: 2.5, maxDistance: 45, maxPolarAngle: Math.PI / 2 - 0.04 }), _jsx(Preload, { all: true })] }));
+    return (_jsxs(_Fragment, { children: [_jsx("fogExp2", { attach: "fog", args: ['#071413', 0.0062] }), _jsx("hemisphereLight", { args: ['#cfe7ff', '#0b2a1d', 0.92] }), _jsx("directionalLight", { position: [42, 34, 18], intensity: 3.0, color: "#fff3db", castShadow: !contactView, "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024, "shadow-camera-left": -28, "shadow-camera-right": 28, "shadow-camera-top": 28, "shadow-camera-bottom": -28, "shadow-camera-near": 1, "shadow-camera-far": 90, "shadow-bias": -0.00025, "shadow-normalBias": 0.035 }), _jsx("directionalLight", { position: [-24, 18, -12], intensity: 1.15, color: "#5bb6ff" }), _jsx("directionalLight", { position: [18, 8, 30], intensity: 0.85, color: "#ffb66e" }), _jsx("spotLight", { position: [34, 22, 8], angle: 0.75, penumbra: 0.85, intensity: 100, color: "#e4f5ff", distance: 80 }), _jsx(Pitch, {}), actors, _jsx(Ball, { sim: sim, timeRef: timeRef, offsideBallRef: isOffside ? offsideBallRef : null }), markings, _jsx(OrbitControls, { ref: controls, makeDefault: true, enabled: cameraPreset === 'free', enablePan: false, target: [27.35, 0.78, 10.25], enableDamping: true, dampingFactor: 0.06, minDistance: 2.5, maxDistance: 45, maxPolarAngle: Math.PI / 2 - 0.04 }), _jsx(Preload, { all: true })] }));
 }
 export function Scene({ sim, timeRef, cameraPreset, showSkeleton, showLabels, showTrajectory, showForces, dual, contactView = false, onReady, }) {
-    return (_jsx(Canvas, { shadows: "basic", dpr: [1, 2], gl: { antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false }, camera: { position: [19.9, 4.2, 7.2], fov: 40, near: 0.1, far: 360 }, onCreated: ({ gl }) => {
+    return (_jsx(Canvas, { shadows: contactView ? false : "basic", dpr: contactView ? 1 : [1, 1.5], gl: { antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false }, camera: { position: [19.9, 4.2, 7.2], fov: 40, near: 0.1, far: 360 }, onCreated: ({ gl }) => {
             gl.toneMapping = THREE.ACESFilmicToneMapping;
             gl.toneMappingExposure = 1.08;
         }, children: _jsx(Suspense, { fallback: null, children: _jsx(SceneContents, { sim: sim, timeRef: timeRef, cameraPreset: cameraPreset, showSkeleton: showSkeleton, showLabels: showLabels, showTrajectory: showTrajectory, showForces: showForces, dual: dual, contactView: contactView, onReady: onReady }) }) }));

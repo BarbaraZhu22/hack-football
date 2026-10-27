@@ -225,7 +225,6 @@ const STAGE_PARTS = {
   overlays: true,
   contact: false,
   minimap: false,
-  freeze: true,
   frameCorners: true,
   vignette: true,
   grain: true,
@@ -236,6 +235,82 @@ function timecode(time) {
   const seconds = Math.floor(time);
   const centiseconds = Math.floor((time - seconds) * 100);
   return `00:0${seconds}.${String(centiseconds).padStart(2, "0")}`;
+}
+
+function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation, time, timeRef }) {
+  const [displayTime, setDisplayTime] = useState(time);
+  const activeEvent = simulation.events.reduce(
+    (current, event) => (event.t <= displayTime ? event : current),
+    simulation.events[0],
+  );
+
+  useEffect(() => {
+    if (!playing) {
+      setDisplayTime(time);
+      return undefined;
+    }
+
+    let request = 0;
+    let lastUpdate = 0;
+    const update = (now) => {
+      if (now - lastUpdate >= 1000 / 12) {
+        setDisplayTime(timeRef.current);
+        lastUpdate = now;
+      }
+      request = requestAnimationFrame(update);
+    };
+    request = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(request);
+  }, [playing, time, timeRef]);
+
+  function togglePlayback() {
+    if (!playing && timeRef.current >= simulation.duration) seek(0);
+    setPlaying((value) => !value);
+  }
+
+  return (
+    <Card className="min-h-0 flex-1 overflow-hidden">
+      <CardContent className="h-full space-y-3 overflow-y-auto p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="icon" variant="outline" aria-label="Restart incident" onClick={() => { setPlaying(false); seek(0); }}><RotateCcw className="size-4" /></Button>
+          <Button size="icon" variant="outline" aria-label="Step back one frame" onClick={() => { setPlaying(false); seek(timeRef.current - 1 / 60); }}><span className="text-sm">−1</span></Button>
+          <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
+          <Button size="icon" variant="outline" aria-label="Step forward one frame" onClick={() => { setPlaying(false); seek(timeRef.current + 1 / 60); }}><span className="text-sm">+1</span></Button>
+          <span className="ml-1 text-sm tabular-nums">{timecode(displayTime)}</span>
+          <span className="text-xs text-muted-foreground">of {timecode(simulation.duration)}</span>
+          <div className="ml-auto flex gap-1">
+            {[0.25, 0.5, 1].map((speed) => (
+              <Button key={speed} size="sm" variant={rate === speed ? "secondary" : "ghost"} onClick={() => setRate(speed)}>{speed}×</Button>
+            ))}
+          </div>
+        </div>
+        <input
+          aria-label="Incident playback position"
+          type="range"
+          min="0"
+          max={simulation.duration}
+          step="0.008333"
+          value={displayTime}
+          onChange={(event) => { setPlaying(false); seek(Number(event.target.value)); }}
+          className="w-full accent-primary"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {simulation.events.map((event) => (
+            <button
+              type="button"
+              key={event.id}
+              onClick={() => { seek(event.t); setPlaying(false); }}
+              className={`rounded-md border px-2 py-1 text-xs transition ${activeEvent.id === event.id ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            >
+              <span className="font-medium">{event.short}</span>
+              <span className="ml-1.5 desk-type-meta opacity-70">{event.t.toFixed(2)}s</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">{activeEvent.label}:</span> {activeEvent.detail}</p>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function PitchTab() {
@@ -264,21 +339,41 @@ export default function PitchTab() {
   const time = isOffside ? offsideTime : state.incident.time;
   const contactTime = isOffside ? simulation.contactT : state.incident.contactTime;
   const timeRef = useRef(time);
+  const playbackRef = useRef(null);
+  const wasPlayingRef = useRef(false);
+  const playingIncidentIdRef = useRef(incidentId);
   const activeEvent = simulation.events.reduce(
     (current, event) => (event.t <= time ? event : current),
     simulation.events[0],
   );
 
   useEffect(() => {
-    setReview({
-      incident,
-      event: incidentActive ? activeEvent : null,
-      events: incidentActive ? simulation.events : [],
-      assessment: incidentActive && isOffside ? simulation.offside : null,
+    if (playing) return;
+    const event = incidentActive ? activeEvent : null;
+    const assessment = incidentActive && isOffside ? simulation.offside : null;
+    setReview((current) => {
+      const sameEvent = (current?.event?.id ?? null) === (event?.id ?? null);
+      const sameEvents = incidentActive
+        ? current?.events === simulation.events
+        : !current?.events?.length;
+      if (
+        current?.incident?.id === incident.id
+        && sameEvent
+        && current?.assessment === assessment
+        && sameEvents
+      ) {
+        return current;
+      }
+      return {
+        incident,
+        event,
+        events: incidentActive ? simulation.events : [],
+        assessment,
+      };
     });
-  }, [activeEvent, incident, incidentActive, isOffside, setReview, simulation.events, simulation.offside]);
+  }, [activeEvent, incident, incidentActive, isOffside, playing, setReview, simulation.events, simulation.offside]);
 
-  timeRef.current = time;
+  if (!playing && !wasPlayingRef.current) timeRef.current = time;
 
   useEffect(() => {
     setCanWarmAssets(true);
@@ -308,12 +403,25 @@ export default function PitchTab() {
 
   const seek = useCallback((nextTime) => {
     const boundedTime = Math.max(0, Math.min(simulation.duration, Number(nextTime) || 0));
+    timeRef.current = boundedTime;
     if (isOffside) {
       setOffsideTime(boundedTime);
     } else {
       run([{ type: "incident.seek", time: boundedTime }]);
     }
   }, [isOffside, run, simulation.duration]);
+  playbackRef.current = { isOffside, rate, duration: simulation.duration };
+
+  useEffect(() => {
+    if (playing) {
+      if (!wasPlayingRef.current) playingIncidentIdRef.current = incidentId;
+      wasPlayingRef.current = true;
+      return;
+    }
+    if (!wasPlayingRef.current) return;
+    wasPlayingRef.current = false;
+    if (playingIncidentIdRef.current === incidentId) seek(timeRef.current);
+  }, [incidentId, playing, seek]);
 
   const setCamera = useCallback((preset) => {
     const option = CAMERA_OPTIONS.find((item) => item.id === preset) ?? CAMERA_OPTIONS[0];
@@ -335,32 +443,27 @@ export default function PitchTab() {
 
     let request = 0;
     let last = performance.now();
-    let elapsed = 0;
-    const frameInterval = isOffside ? 1 / 60 : 1 / 24;
     const advance = (now) => {
+      const playback = playbackRef.current;
+      if (!playback) return;
       const delta = Math.min(0.05, (now - last) / 1000);
       last = now;
-      elapsed += delta;
-      if (elapsed >= frameInterval) {
-        let next = timeRef.current + elapsed * rate;
-        if (next >= simulation.duration) {
-          if (isOffside) {
-            next = simulation.duration;
-            setPlaying(false);
-          } else {
-            next = 0;
-          }
+      let next = timeRef.current + delta * playback.rate;
+      if (next >= playback.duration) {
+        if (playback.isOffside) {
+          timeRef.current = playback.duration;
+          setPlaying(false);
+          return;
         }
-        timeRef.current = next;
-        seek(next);
-        elapsed = 0;
+        next = 0;
       }
+      timeRef.current = next;
       request = requestAnimationFrame(advance);
     };
 
     request = requestAnimationFrame(advance);
     return () => cancelAnimationFrame(request);
-  }, [isOffside, playing, rate, seek, simulation.duration]);
+  }, [playing]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -403,6 +506,7 @@ export default function PitchTab() {
 
   useEffect(() => {
     setPlaying(false);
+    timeRef.current = incidentId === "offside" ? 0 : state.incident.time;
     if (incidentId === "offside") {
       setOffsideTime(0);
       setCamera("broadcast");
@@ -460,7 +564,7 @@ export default function PitchTab() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="min-w-0 gap-2">
-          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS[incident.rating].color }} />
+          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS.red.color }} />
           <span className="truncate">{incident.label}</span>
           <ChevronDown className="size-4 shrink-0 opacity-60" />
         </Button>
@@ -471,7 +575,7 @@ export default function PitchTab() {
         <DropdownMenuRadioGroup value={incidentId} onValueChange={setIncidentId}>
           {INCIDENTS.map((item) => (
             <DropdownMenuRadioItem key={item.id} value={item.id} className="gap-2">
-              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS[item.rating].color }} />
+              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: RATINGS.red.color }} />
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
               {item.status === "active" ? null : (
                 <span className="desk-type-meta uppercase tracking-wider text-muted-foreground">Soon</span>
@@ -495,13 +599,8 @@ export default function PitchTab() {
     setPlaying(false);
   }
 
-  function togglePlayback() {
-    if (!playing && isOffside && time >= simulation.duration) seek(0);
-    setPlaying((value) => !value);
-  }
-
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col gap-4">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {incidentSwitcher}
@@ -518,7 +617,7 @@ export default function PitchTab() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_255px]">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_255px] lg:grid-rows-[minmax(0,1fr)]">
         {canWarmAssets && incidentActive && !assetsFailed ? (
           <SceneErrorBoundary
             key={`${incidentId}:${warmupAttempt}`}
@@ -531,8 +630,8 @@ export default function PitchTab() {
           </SceneErrorBoundary>
         ) : null}
 
-        <div className="flex h-full min-h-0 flex-col gap-3">
-          <Card className="relative min-h-[340px] min-w-0 flex-1 overflow-hidden border-0 bg-transparent p-0 shadow-none">
+        <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+          <Card className="relative h-[500px] min-h-[500px] max-h-[500px] min-w-0 shrink-0 overflow-hidden border-0 bg-transparent p-0 shadow-none">
             {assetsFailed ? (
               <div className="grid h-full min-h-[340px] place-items-center rounded-panel border bg-muted/30 p-4 text-center">
                 <div className="space-y-3">
@@ -563,47 +662,16 @@ export default function PitchTab() {
             ) : null}
           </Card>
 
-          <Card>
-            <CardContent className="space-y-3 p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button size="icon" variant="outline" aria-label="Restart incident" onClick={() => { setPlaying(false); seek(0); }}><RotateCcw className="size-4" /></Button>
-                <Button size="icon" variant="outline" aria-label="Step back one frame" onClick={() => { setPlaying(false); seek(time - 1 / 60); }}><span className="text-sm">−1</span></Button>
-                <Button size="icon" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>{playing ? <Pause className="size-4" /> : <Play className="size-4" />}</Button>
-                <Button size="icon" variant="outline" aria-label="Step forward one frame" onClick={() => { setPlaying(false); seek(time + 1 / 60); }}><span className="text-sm">+1</span></Button>
-                <span className="ml-1 text-sm tabular-nums">{timecode(time)}</span>
-                <span className="text-xs text-muted-foreground">of {timecode(simulation.duration)}</span>
-                <div className="ml-auto flex gap-1">
-                  {[0.25, 0.5, 1].map((speed) => (
-                    <Button key={speed} size="sm" variant={rate === speed ? "secondary" : "ghost"} onClick={() => setRate(speed)}>{speed}×</Button>
-                  ))}
-                </div>
-              </div>
-              <input
-                aria-label="Incident playback position"
-                type="range"
-                min="0"
-                max={simulation.duration}
-                step="0.008333"
-                value={time}
-                onChange={(event) => { setPlaying(false); seek(Number(event.target.value)); }}
-                className="w-full accent-primary"
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {simulation.events.map((event) => (
-                  <button
-                    type="button"
-                    key={event.id}
-                    onClick={() => { seek(event.t); setPlaying(false); }}
-                    className={`rounded-md border px-2 py-1 text-xs transition ${activeEvent.id === event.id ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-                  >
-                    <span className="font-medium">{event.short}</span>
-                    <span className="ml-1.5 desk-type-meta opacity-70">{event.t.toFixed(2)}s</span>
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">{activeEvent.label}:</span> {activeEvent.detail}</p>
-            </CardContent>
-          </Card>
+          <PlaybackControls
+            playing={playing}
+            rate={rate}
+            setRate={setRate}
+            setPlaying={setPlaying}
+            seek={seek}
+            simulation={simulation}
+            time={time}
+            timeRef={timeRef}
+          />
         </div>
 
         <aside className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
@@ -649,7 +717,7 @@ export default function PitchTab() {
             <div className={viewportStyles.insetCrosshair} />
           </div>
 
-          <IncidentTrackingFrame incident={incident} simulation={simulation} time={time} />
+          <IncidentTrackingFrame incident={incident} simulation={simulation} time={time} timeRef={timeRef} playing={playing} />
         </aside>
       </div>
     </div>

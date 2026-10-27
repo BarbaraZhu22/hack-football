@@ -143,6 +143,18 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
     const labelRef = useRef(null);
     const headRef = useRef(null);
     const shadowRef = useRef(null);
+    const poseBlendRef = useRef(null);
+    const headPositionRef = useRef(new THREE.Vector3());
+    const sampledFrameRef = useRef({});
+    const lastPoseTimeRef = useRef(Number.NaN);
+    const rotationScratch = useMemo(() => ({
+        axisX: new THREE.Vector3(1, 0, 0),
+        axisY: new THREE.Vector3(0, 1, 0),
+        axisZ: new THREE.Vector3(0, 0, 1),
+        yaw: new THREE.Quaternion(),
+        pitch: new THREE.Quaternion(),
+        roll: new THREE.Quaternion(),
+    }), []);
     const shadowTex = useMemo(() => {
         const c = document.createElement('canvas');
         c.width = c.height = 256;
@@ -171,6 +183,12 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
         const rig = buildRig(group.current, prepared.scene);
         rigRef.current = rig;
         headRef.current = rig.bones.head;
+        const blendBones = [];
+        rig.model.traverse((o) => {
+            if (o.isBone)
+                blendBones.push({ bone: o, quaternion: new THREE.Quaternion() });
+        });
+        poseBlendRef.current = { bones: blendBones, pelvisPosition: new THREE.Vector3() };
         const skel = buildSkeletonOverlay();
         skel.group.visible = showSkeleton;
         skel.group.layers.mask = group.current.layers.mask;
@@ -213,16 +231,21 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
         const g = group.current;
         if (!rig || !g)
             return;
-        const f = sampleFrame(sim, timeRef.current);
+        const time = timeRef.current;
+        if (time === lastPoseTimeRef.current)
+            return;
+        lastPoseTimeRef.current = time;
+        const f = sampleFrame(sim, time, sampledFrameRef.current);
         const a = role === 'tackler' ? f.tackler : f.carrier;
         g.position.set(a.x, 0, a.z);
         const runEnd = role === 'tackler' ? sim.contactT - 0.34 : sim.contactT - 0.03;
         const runFade = 0.18;
-        const runBlend = THREE.MathUtils.clamp((runEnd - timeRef.current) / runFade, 0, 1);
+        const runBlend = THREE.MathUtils.clamp((runEnd - time) / runFade, 0, 1);
         if (role === 'carrier') {
-            const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a.yaw);
-            const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a.pitch * (1 - runBlend));
-            const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a.roll * (1 - runBlend));
+            const { axisX, axisY, axisZ, yaw: qy, pitch: qx, roll: qz } = rotationScratch;
+            qy.setFromAxisAngle(axisY, a.yaw);
+            qx.setFromAxisAngle(axisX, a.pitch * (1 - runBlend));
+            qz.setFromAxisAngle(axisZ, a.roll * (1 - runBlend));
             g.quaternion.copy(qy).multiply(qx).multiply(qz);
         }
         else {
@@ -230,22 +253,20 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
         }
         if (runBlend > 0.001) {
             const rate = 1.15 + a.speed * 0.15;
-            setRunTime(runPlayer, (timeRef.current * rate) % runPlayer.duration);
+            setRunTime(runPlayer, (time * rate) % runPlayer.duration);
             retargetRun(runPlayer, rig);
             if (runBlend < 0.999) {
-                const saved = [];
-                rig.model.traverse((o) => {
-                    if (o.isBone)
-                        saved.push({ bone: o, q: o.quaternion.clone() });
-                });
-                const pelvisPos = rig.bones.pelvis.position.clone();
+                const { bones, pelvisPosition } = poseBlendRef.current;
+                for (const item of bones)
+                    item.quaternion.copy(item.bone.quaternion);
+                pelvisPosition.copy(rig.bones.pelvis.position);
                 if (role === 'tackler')
                     poseTackler(rig, a);
                 else
                     poseCarrier(rig, a);
-                for (const item of saved)
-                    item.bone.quaternion.slerp(item.q, runBlend);
-                rig.bones.pelvis.position.lerp(pelvisPos, runBlend);
+                for (const item of bones)
+                    item.bone.quaternion.slerp(item.quaternion, runBlend);
+                rig.bones.pelvis.position.lerp(pelvisPosition, runBlend);
                 rig.group.updateMatrixWorld(true);
             }
         }
@@ -259,7 +280,7 @@ export function Actor({ sim, timeRef, role, side, kit, showSkeleton, showLabels 
             shadowRef.current.rotation.z = role === 'tackler' ? a.yaw : a.yaw;
         }
         if (headRef.current) {
-            const p = new THREE.Vector3();
+            const p = headPositionRef.current;
             headRef.current.getWorldPosition(p);
             g.worldToLocal(p);
             label.position.set(p.x, p.y + 0.38, p.z);
