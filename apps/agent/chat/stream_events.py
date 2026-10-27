@@ -5,7 +5,7 @@ from typing import Any
 
 from agent_framework import AgentResponse
 
-from chat.analysis import SMART_ANALYSIS_SCHEMA_VERSION
+from chat.analysis import SMART_ANALYSIS_SCHEMA_VERSION, take_ui_analysis
 
 
 def parse_function_call(content: Any) -> dict[str, Any] | None:
@@ -30,6 +30,10 @@ def parse_function_call(content: Any) -> dict[str, Any] | None:
 
 
 def extract_analysis(result: AgentResponse) -> dict[str, Any] | None:
+    ui_analysis = take_ui_analysis()
+    if ui_analysis and ui_analysis.get("schemaVersion") == SMART_ANALYSIS_SCHEMA_VERSION:
+        return ui_analysis
+
     call_names: dict[str, str] = {}
     for message in result.messages or []:
         for content in getattr(message, "contents", []) or []:
@@ -50,7 +54,6 @@ def extract_analysis(result: AgentResponse) -> dict[str, Any] | None:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if parsed.get("schemaVersion") != SMART_ANALYSIS_SCHEMA_VERSION:
-                continue
-            return parsed
-    return None
+            if parsed.get("ok"):
+                return take_ui_analysis()
+    return take_ui_analysis()

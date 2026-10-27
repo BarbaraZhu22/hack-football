@@ -24,6 +24,7 @@ class ChatContext(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     context: ChatContext | None = None
+    adjudicate: bool = False
 
 
 class CommentaryRequest(BaseModel):
@@ -47,10 +48,15 @@ async def chat_endpoint(body: ChatRequest):
     payload: dict[str, Any] = {
         "messages": [message.model_dump() for message in body.messages],
         "context": body.context.model_dump() if body.context else {},
+        "adjudicate": body.adjudicate,
     }
 
     async def event_stream():
-        async for chunk in microsoft_chat_stream(payload["messages"], payload.get("context")):
+        async for chunk in microsoft_chat_stream(
+            payload["messages"],
+            payload.get("context"),
+            adjudicate=bool(payload.get("adjudicate")),
+        ):
             yield chunk
 
     return StreamingResponse(

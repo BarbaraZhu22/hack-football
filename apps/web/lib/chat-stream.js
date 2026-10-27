@@ -17,11 +17,11 @@ function parseSseBlock(block) {
   }
 }
 
-export async function streamChatMessage({ messages, context }, onEvent) {
+export async function streamChatMessage({ messages, context, adjudicate = false }, onEvent) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, context }),
+    body: JSON.stringify({ messages, context, adjudicate: Boolean(adjudicate) }),
   });
 
   if (!response.ok) {

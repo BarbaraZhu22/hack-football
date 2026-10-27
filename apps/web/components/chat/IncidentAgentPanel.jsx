@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BookOpen, CircleCheck, CircleHelp, CircleX, Scale } from "lucide-react";
 
 import { AgentConversation } from "@/components/chat/AgentChat";
@@ -122,7 +122,17 @@ function MatchIcon({ status, label }) {
   );
 }
 
-function AgentResultIcon({ value, kind = "correctness", rationale }) {
+function AgentResultIcon({ value, kind = "correctness", rationale, loading = false }) {
+  if (loading) {
+    return (
+      <CircleHelp
+        className="size-4 shrink-0 animate-pulse text-muted-foreground"
+        role="img"
+        aria-label="Adjudicator is reviewing"
+        title="Adjudicator is reviewing"
+      />
+    );
+  }
   const positive = kind === "consistency" ? value === "consistent" : value === "correct";
   const negative = kind === "consistency" ? value === "inconsistent" : value === "incorrect";
   const Icon = positive ? CircleCheck : negative ? CircleX : CircleHelp;
@@ -143,7 +153,7 @@ function AgentResultIcon({ value, kind = "correctness", rationale }) {
   );
 }
 
-function CriterionRow({ criterion, adjudication }) {
+function CriterionRow({ criterion, adjudication, adjudicationLoading = false }) {
   const met = criterion.status === "met";
   const notAssessed = criterion.status === "not-assessed";
   return (
@@ -161,7 +171,11 @@ function CriterionRow({ criterion, adjudication }) {
           </span>
         </p>
       </div>
-      <AgentResultIcon value={adjudication?.correctness} rationale={adjudication?.rationale} />
+      <AgentResultIcon
+        value={adjudication?.correctness}
+        rationale={adjudication?.rationale}
+        loading={adjudicationLoading}
+      />
     </div>
   );
 }
@@ -185,7 +199,7 @@ function DecisionFact({ label, value }) {
   );
 }
 
-function PrecedentCard({ precedent, adjudication }) {
+function PrecedentCard({ precedent, adjudication, adjudicationLoading = false }) {
   const caseId = precedent.caseId || precedent.id;
   const source = precedent.source || {};
   const historicAssessment = precedent.assessment || {};
@@ -203,7 +217,12 @@ function PrecedentCard({ precedent, adjudication }) {
         </div>
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5" title="Current-case consistency from adjudicator">
           <span className="desk-type-meta text-muted-foreground">Consistency</span>
-          <AgentResultIcon value={adjudication?.consistency} kind="consistency" rationale={adjudication?.rationale} />
+          <AgentResultIcon
+            value={adjudication?.consistency}
+            kind="consistency"
+            rationale={adjudication?.rationale}
+            loading={adjudicationLoading}
+          />
         </div>
       </summary>
       <div className="space-y-2 border-t py-2.5">
@@ -249,18 +268,23 @@ function PrecedentCard({ precedent, adjudication }) {
 
 export default function IncidentAgentPanel() {
   const { review, adjudicatorResults = {}, setAdjudicatorResult } = useIncidentReview();
-  const adjudicationRequested = useRef(new Set());
   const [activeView, setActiveView] = useState("rules");
   const [precedentState, setPrecedentState] = useState({ incidentId: null, status: "idle", precedents: [], error: null });
+  const [adjudicationState, setAdjudicationState] = useState({
+    incidentId: null,
+    status: "idle",
+    error: null,
+  });
   const decision = getRecordedDecision(review);
   const currentEvent = review?.event;
   const criteria = useMemo(() => getRuleCriteria(review), [review]);
   const comparison = useMemo(() => getDecisionComparison(review), [review]);
-  const metCount = criteria.filter((criterion) => criterion.status === "met").length;
-  const assessedCount = criteria.filter((criterion) => criterion.status !== "not-assessed").length;
   const incidentId = review?.incident?.incidentId;
   const incidentTypes = useMemo(() => PRECEDENT_TYPES[review?.incident?.id] ?? [], [review?.incident?.id]);
   const submittedAdjudicatorResult = incidentId ? adjudicatorResults[incidentId] ?? null : null;
+  const analysisCounts = submittedAdjudicatorResult?.analysis?.ruleCriteria;
+  const metCount = analysisCounts?.met ?? criteria.filter((criterion) => criterion.status === "met").length;
+  const assessedCount = analysisCounts?.assessed ?? criteria.filter((criterion) => criterion.status !== "not-assessed").length;
 
   useEffect(() => {
     if (!incidentId || !incidentTypes.length) {
@@ -294,36 +318,85 @@ export default function IncidentAgentPanel() {
   const precedentStatus = precedentState.incidentId === incidentId ? precedentState.status : "loading";
 
   useEffect(() => {
-    if (!incidentId || precedentStatus !== "ready") return;
-    if (adjudicationRequested.current.has(incidentId)) return;
-    adjudicationRequested.current.add(incidentId);
+    if (!incidentId) {
+      setAdjudicationState({ incidentId: null, status: "idle", error: null });
+      return undefined;
+    }
+    if (precedentStatus !== "ready") {
+      setAdjudicationState({ incidentId, status: "idle", error: null });
+      return undefined;
+    }
+    if (submittedAdjudicatorResult?.analysis?.ruling) {
+      setAdjudicationState({ incidentId, status: "ready", error: null });
+      return undefined;
+    }
+
+    let cancelled = false;
+    setAdjudicationState({ incidentId, status: "loading", error: null });
     requestAdjudication({
       incidentId,
       incidentRegistryId: review?.incident?.id,
       precedentTypes: incidentTypes,
-      precedentCaseIds: precedents.map((precedent) => precedent.caseId || precedent.id).filter(Boolean),
       ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
       recordedDecision: { label: decision.title, detail: decision.detail },
       eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
     })
       .then((result) => {
-        const { toolCalls: _ignored, ...adjudicatorResult } = result;
-        setAdjudicatorResult(adjudicatorResult);
+        if (cancelled) return;
+        setAdjudicatorResult({
+          incidentId,
+          analysis: result.analysis,
+          ruleEvaluations: result.ruleEvaluations ?? result.analysis?.ruleEvaluations ?? {},
+          precedentComparisons: result.precedentComparisons ?? result.analysis?.precedentComparisons ?? {},
+        });
+        setAdjudicationState({ incidentId, status: "ready", error: null });
       })
-      .catch(() => {
-        adjudicationRequested.current.delete(incidentId);
+      .catch((error) => {
+        if (cancelled) return;
+        setAdjudicationState({
+          incidentId,
+          status: "error",
+          error: error instanceof Error ? error.message : "Adjudication is unavailable.",
+        });
       });
-  }, [incidentId, precedentStatus]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    incidentId,
+    precedentStatus,
+    submittedAdjudicatorResult?.analysis?.ruling,
+    review?.incident?.id,
+    incidentTypes,
+    criteria,
+    decision.title,
+    decision.detail,
+    currentEvent,
+    setAdjudicatorResult,
+  ]);
+
+  const adjudicationLoading =
+    adjudicationState.incidentId === incidentId && adjudicationState.status === "loading";
+  const adjudicationError =
+    adjudicationState.incidentId === incidentId && adjudicationState.status === "error"
+      ? adjudicationState.error
+      : null;
   const resultTemplate = useMemo(
     () => getAdjudicatorResultTemplate(incidentId, criteria.map((criterion) => criterion.id), precedents.map((precedent) => precedent.caseId || precedent.id)),
     [incidentId, criteria, precedents],
   );
-  const adjudicatorResult = {
-    ...resultTemplate,
-    ...(submittedAdjudicatorResult ?? {}),
-    ruleEvaluations: { ...resultTemplate.ruleEvaluations, ...(submittedAdjudicatorResult?.ruleEvaluations ?? {}) },
-    precedentComparisons: { ...resultTemplate.precedentComparisons, ...(submittedAdjudicatorResult?.precedentComparisons ?? {}) },
-  };
+  const adjudicatorResult = adjudicationLoading
+    ? resultTemplate
+    : {
+        ...resultTemplate,
+        ...(submittedAdjudicatorResult ?? {}),
+        ruleEvaluations: { ...resultTemplate.ruleEvaluations, ...(submittedAdjudicatorResult?.ruleEvaluations ?? {}) },
+        precedentComparisons: {
+          ...resultTemplate.precedentComparisons,
+          ...(submittedAdjudicatorResult?.precedentComparisons ?? {}),
+        },
+      };
 
   const chatIncident = review?.incident
     ? {
@@ -332,35 +405,14 @@ export default function IncidentAgentPanel() {
         label: review.incident.label,
         minute: review.incident.minute,
         summary: review.incident.summary,
-        currentEvent: currentEvent
-          ? { label: currentEvent.label, detail: currentEvent.detail }
-          : null,
         recordedDecision: decision,
         ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({
           id,
           label,
           law,
-          matchStatus: status,
+          status,
           reading,
-          adjudicatorCorrectness: adjudicatorResult?.ruleEvaluations?.[id]?.correctness ?? null,
         })),
-        analysisVsReferee: comparison,
-        precedents: precedents.map((precedent) => ({
-          caseId: precedent.caseId,
-          season: precedent.season,
-          fixture: precedent.fixture,
-          incidentType: precedent.incidentType,
-          incidentSubtype: precedent.incidentSubtype,
-          facts: precedent.facts,
-          onFieldDecision: precedent.onFieldDecision,
-          varAction: precedent.varAction,
-          finalDecision: precedent.finalDecision,
-          currentCaseConsistency: adjudicatorResult?.precedentComparisons?.[precedent.caseId]?.consistency ?? null,
-          historicalAssessment: precedent.assessment,
-          source: precedent.source,
-        })),
-        adjudicatorResult,
-        adjudicatorResultContract: ADJUDICATOR_RESULT_CONTRACT,
       }
     : undefined;
 
@@ -408,9 +460,18 @@ export default function IncidentAgentPanel() {
                       <Scale className="size-3.5 text-primary" /> Rule criteria match
                     </h2>
                     <Badge variant="outline" className="desk-type-meta">
-                      {criteria.length ? `${metCount} / ${assessedCount} met` : "Pending"}
+                      {adjudicationLoading
+                        ? "Reviewing…"
+                        : criteria.length
+                          ? `${metCount} / ${assessedCount} met`
+                          : "Pending"}
                     </Badge>
                   </div>
+                  {adjudicationError ? (
+                    <p className="mb-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 desk-type-meta text-destructive">
+                      {adjudicationError}
+                    </p>
+                  ) : null}
                   {criteria.length ? (
                     <div className="divide-y rounded-md border px-2">
                       {criteria.map((criterion) => (
@@ -418,6 +479,7 @@ export default function IncidentAgentPanel() {
                           key={criterion.id}
                           criterion={criterion}
                           adjudication={adjudicatorResult?.ruleEvaluations?.[criterion.id]}
+                          adjudicationLoading={adjudicationLoading}
                         />
                       ))}
                     </div>
@@ -426,7 +488,11 @@ export default function IncidentAgentPanel() {
                       No rule criteria are available for this incident yet.
                     </p>
                   )}
-                  <p className="mt-1 desk-type-meta text-muted-foreground">Right-side status icons show adjudicator validation.</p>
+                  <p className="mt-1 desk-type-meta text-muted-foreground">
+                    {adjudicationLoading
+                      ? "Adjudicator is reviewing criteria against laws and precedents…"
+                      : "Right-side status icons show adjudicator validation."}
+                  </p>
                 </section>
 
                 <section>
@@ -468,6 +534,7 @@ export default function IncidentAgentPanel() {
                         key={precedent.caseId || precedent.id}
                         precedent={precedent}
                         adjudication={adjudicatorResult?.precedentComparisons?.[precedent.caseId || precedent.id]}
+                        adjudicationLoading={adjudicationLoading}
                       />
                     ))}
                   </div>
@@ -476,6 +543,11 @@ export default function IncidentAgentPanel() {
                     No historical cases are tagged for this incident category yet.
                   </p>
                 )}
+                {adjudicationError ? (
+                  <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 desk-type-meta text-destructive">
+                    {adjudicationError}
+                  </p>
+                ) : null}
               </div>
             )}
           </ScrollArea>

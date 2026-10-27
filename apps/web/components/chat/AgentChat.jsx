@@ -14,6 +14,7 @@ import {
 import { Message, MessageContent } from "@/components/ui/message";
 import { PromptInput } from "@/components/ui/prompt-input";
 import { SmartAnalysisCard } from "@/components/ui/smart-analysis-card";
+import { SmartAnalysisLists } from "@/components/ui/smart-analysis-lists";
 import { ThinkingBlock } from "@/components/ui/thinking-block";
 import { ToolInvocationList } from "@/components/ui/tool-invocation";
 
@@ -74,7 +75,10 @@ function AssistantReply({ message }) {
         />
       ) : null}
       {message.phase === "done" && hasAnalysis ? (
-        <SmartAnalysisCard analysis={message.analysis} />
+        <>
+          <SmartAnalysisCard analysis={message.analysis} />
+          <SmartAnalysisLists analysis={message.analysis} />
+        </>
       ) : null}
       {showPlainReply ? (
         <Message from="assistant">
@@ -90,6 +94,7 @@ export function AgentConversation({
   context = {},
   initialMessage = DEFAULT_GREETING,
   seedMessage = null,
+  adjudicate = false,
   className,
 }) {
   const pathname = usePathname();
@@ -112,7 +117,9 @@ export function AgentConversation({
     });
   }
 
-  async function dispatchChat(nextMessages, assistantIndex) {
+  const adjudicateRef = useRef(false);
+
+  async function dispatchChat(nextMessages, assistantIndex, runAdjudicate = false) {
     pendingCountRef.current += 1;
     setPending(true);
     setError(null);
@@ -122,6 +129,7 @@ export function AgentConversation({
         {
           messages: nextMessages.map(({ role, content: text }) => ({ role, content: text })),
           context: { tab: tabFromPathname(pathname), ...context },
+          adjudicate: runAdjudicate,
         },
         (event, data) => {
           if (event === "tool") {
@@ -177,7 +185,7 @@ export function AgentConversation({
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
       const assistantIndex = nextMessages.length;
-      void dispatchChat(nextMessages, assistantIndex);
+      void dispatchChat(nextMessages, assistantIndex, false);
       return [...nextMessages, createStreamingAssistant()];
     });
   }
@@ -187,7 +195,13 @@ export function AgentConversation({
     const key = seedMessage.key ?? seedMessage.content;
     if (seededRef.current === key) return;
     seededRef.current = key;
-    void handleSubmit(seedMessage.content);
+    adjudicateRef.current = Boolean(seedMessage.adjudicate);
+    setMessages((current) => {
+      const nextMessages = [...current, { role: "user", content: seedMessage.content, toolCalls: [] }];
+      const assistantIndex = nextMessages.length;
+      void dispatchChat(nextMessages, assistantIndex, adjudicateRef.current);
+      return [...nextMessages, createStreamingAssistant()];
+    });
   }, [seedMessage]);
 
   return (

@@ -1,6 +1,6 @@
 from agent_framework import tool
 
-from chat.analysis import smart_analysis_json
+from chat.analysis import show_analysis_json
 from chat.catalog import precedents_json, rules_json
 
 
@@ -17,10 +17,11 @@ def search_rules(incident_type: str) -> str:
 
 
 @tool
-def show_analysis(incident_type: str, ruling: str, summary: str) -> str:
-    """Publish the ruling card. incident_type is a precedent id such as serious_foul_play, not the ruling text."""
-    return smart_analysis_json(incident_type.strip(), ruling, summary)
+def show_analysis(incident_type: str, ruling: str, summary: str, reviews: str = "[]") -> str:
+    """Confirm the ruling card after catalog lookup. incident_type is a precedent id such as serious_foul_play."""
+    return show_analysis_json(incident_type.strip(), ruling, summary, reviews)
 
 
 REFERENCE_TOOLS = [search_precedents, search_rules]
-DESK_TOOLS = [*REFERENCE_TOOLS, show_analysis]
+DESK_TOOLS = [show_analysis]
+ADJUDICATION_TOOLS = [show_analysis]

@@ -7,6 +7,7 @@ import { AgentConversation } from "@/components/chat/AgentChat";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { CRITERIA } from "@/lib/incident";
 import { getIncident } from "@/lib/incidents";
 import { PRECEDENT_TYPES } from "@/lib/precedent-types";
 
@@ -122,6 +123,9 @@ export default function AgentPanel({
     const incident = entry.event?.incidentId ? getIncident(entry.event.incidentId) : null;
     const clockLabel = entry.clockLabel || `${entry.minute}:${String(entry.second).padStart(2, "0")}`;
     const registryId = incident?.id || entry.event?.incidentId || null;
+    const ruleCriteria = registryId === "tackle"
+      ? CRITERIA.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading }))
+      : [];
     const context = {
       clockLabel,
       commentaryLine: commentaryByEventId[entry.eventId || entry.id] || historicalLine(entry),
@@ -129,6 +133,7 @@ export default function AgentPanel({
       decision,
       incident,
       precedentTypes: registryId ? PRECEDENT_TYPES[registryId] || [] : [],
+      ruleCriteria,
       match: match
         ? {
             home: match.home?.code,
@@ -145,6 +150,7 @@ export default function AgentPanel({
     seededMomentsRef.current.add(eventId);
     setAssistantSeed({
       key: eventId,
+      adjudicate: true,
       role: "user",
       content:
         `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `
