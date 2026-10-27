@@ -498,7 +498,7 @@ export default function TacticsTab() {
   }, [jump, startGame]);
 
   return (
-    <div className="flex min-h-[620px] min-w-0 flex-col gap-4 lg:min-h-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2 text-primary">
@@ -541,10 +541,10 @@ export default function TacticsTab() {
           </div>
         </div>
 
-        <div className="relative w-full overflow-hidden bg-[#fff7f4]">
+        <div className="relative min-h-0 w-full flex-1 overflow-hidden bg-[#fff7f4]">
           <canvas
             ref={canvasRef}
-            className="block aspect-[16/7] w-full touch-manipulation"
+            className="absolute inset-0 block h-full w-full touch-manipulation"
             aria-label="A cute red and white football runs along a training pitch. Click anywhere or press space to start, then click, tap, or press the up arrow to jump over cones."
           />
 
