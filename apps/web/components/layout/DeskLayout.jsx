@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -82,7 +83,9 @@ export default function DeskLayout({ children }) {
 
           {showAgentRail ? (
             <aside className="hidden h-full min-h-0 min-w-0 lg:block">
-              <AgentPanel />
+              <Suspense fallback={null}>
+                <AgentPanel />
+              </Suspense>
             </aside>
           ) : null}
         </div>
@@ -98,7 +101,9 @@ export default function DeskLayout({ children }) {
                 <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
               </summary>
               <div className={cn("mt-3 h-[420px]")}>
-                <AgentPanel />
+                <Suspense fallback={null}>
+                  <AgentPanel />
+                </Suspense>
               </div>
             </details>
           </div>
