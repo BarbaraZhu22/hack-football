@@ -5,7 +5,8 @@ from typing import Any
 
 from agent_framework import AgentResponse
 
-from chat.analysis import SMART_ANALYSIS_SCHEMA_VERSION, take_ui_analysis
+from chat.analysis import SMART_ANALYSIS_SCHEMA_VERSION, materialize_ui_analysis_from_payload, take_ui_analysis
+from chat.tool_trace import extract_tool_calls
 
 
 def parse_function_call(content: Any) -> dict[str, Any] | None:
@@ -30,6 +31,10 @@ def parse_function_call(content: Any) -> dict[str, Any] | None:
 
 
 def extract_analysis(result: AgentResponse) -> dict[str, Any] | None:
+    for call in extract_tool_calls(result):
+        if call.get("name") == "show_analysis":
+            materialize_ui_analysis_from_payload(call.get("input"))
+            break
     ui_analysis = take_ui_analysis()
     if ui_analysis and ui_analysis.get("schemaVersion") == SMART_ANALYSIS_SCHEMA_VERSION:
         return ui_analysis

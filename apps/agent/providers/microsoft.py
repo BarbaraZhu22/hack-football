@@ -20,6 +20,7 @@ from chat.analysis import (
     bind_precedent_types,
     bind_rule_criteria,
     clear_ui_analysis,
+    materialize_ui_analysis_from_payload,
     reset_catalog,
     reset_precedent_types,
     reset_rule_criteria,
@@ -27,7 +28,7 @@ from chat.analysis import (
 from chat.sse import format_sse
 from chat.stream_events import extract_analysis, parse_function_call
 from chat.tool_trace import extract_tool_calls
-from chat.tools import ensure_playback_request, materialize_control_scene_calls
+from chat.tools import ensure_scene_control, materialize_control_scene_calls
 from chat.pitch_context import bind_pitch_context, bind_scene_actions, reset_pitch_context, reset_scene_actions, take_scene_actions
 from chat.workflow import aggregate_catalog, catalog_tool_events
 from providers.foundry_client import build_chat_client
@@ -172,7 +173,7 @@ async def _stream_agent(
     agent: Agent,
     run_messages: list[Message],
     prefetched_calls: list[dict[str, Any]],
-    playback_text: str = "",
+    scene_request: str = "",
 ) -> AsyncIterator[str]:
     stream = agent.run(run_messages, stream=True)
     seen_tools: set[tuple[str, str]] = set()
@@ -183,6 +184,7 @@ async def _stream_agent(
     tools_started = bool(prefetched_calls)
     text_buffer: list[str] = []
     streamed_text = ""
+    show_analysis_input: dict[str, Any] | None = None
 
     def flush_text_buffer() -> list[str]:
         if not text_buffer:
@@ -196,6 +198,8 @@ async def _stream_agent(
         for content in update.contents or []:
             parsed_call = parse_function_call(content)
             if parsed_call:
+                if parsed_call["name"] == "show_analysis" and isinstance(parsed_call["input"], dict):
+                    show_analysis_input = parsed_call["input"]
                 key = (parsed_call["name"], json.dumps(parsed_call["input"], sort_keys=True))
                 if key not in seen_tools:
                     seen_tools.add(key)
@@ -231,10 +235,11 @@ async def _stream_agent(
         text_buffer.clear()
 
     materialize_control_scene_calls(final)
-    if playback_text:
-        ensure_playback_request(playback_text)
+    materialize_ui_analysis_from_payload(show_analysis_input)
 
     text = (final.text or streamed_text or "").strip()
+    tool_calls = [*prefetched_calls, *extract_tool_calls(final)]
+    text, tool_calls = ensure_scene_control(scene_request, text, tool_calls)
     if not text:
         yield format_sse("error", {"message": "Foundry returned an empty response."})
         return
@@ -244,7 +249,7 @@ async def _stream_agent(
         {
             "message": {"role": "assistant", "content": text},
             "actions": take_scene_actions(),
-            "toolCalls": [*prefetched_calls, *extract_tool_calls(final)],
+            "toolCalls": tool_calls,
             "analysis": extract_analysis(final),
         },
     )
@@ -291,16 +296,15 @@ async def chat_stream(
 
     agent = _followup_agent() if (context or {}).get("minuteContext") else _desk_agent()
     run_messages = [*framework_messages, *_context_messages(context, adjudicate=False)]
+    scene_request = ""
+    for message in reversed(messages):
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            scene_request = message["content"]
+            break
     pitch_token = bind_pitch_context((context or {}).get("pitch"))
     scene_token = bind_scene_actions()
-    playback_text = ""
-    if (context or {}).get("tab") == "pitch" and not (context or {}).get("minuteContext"):
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                playback_text = str(message.get("content") or "")
-                break
     try:
-        async for event in _stream_agent(agent, run_messages, [], playback_text):
+        async for event in _stream_agent(agent, run_messages, [], scene_request):
             yield event
     except (RuntimeError, ValueError) as error:
         yield format_sse("error", {"message": str(error)})

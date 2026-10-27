@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { sendChatMessage } from "@/lib/agent-client";
 import { usePitchChatContext } from "@/lib/pitch-chat-context";
 import { useScene } from "@/lib/scene/SceneProvider";
-import { actionsFromControlScene, actionsFromPlaybackText } from "@/lib/scene/commands";
+import { actionsFromControlScene } from "@/lib/scene/commands";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -107,7 +107,7 @@ export function AgentConversation({
   const seededRef = useRef(null);
   const pendingCountRef = useRef(0);
   const contextRef = useRef(context);
-  const appliedSceneKeyRef = useRef("");
+  const appliedSceneButtonsRef = useRef(new Set());
 
   useEffect(() => {
     contextRef.current = context;
@@ -129,6 +129,17 @@ export function AgentConversation({
     pendingCountRef.current += 1;
     setPending(true);
     setError(null);
+    appliedSceneButtonsRef.current = new Set();
+
+    function runSceneActions(actions) {
+      const fresh = actions.filter((action) => {
+        if (action?.type !== "ui.press" || !action.button) return true;
+        if (appliedSceneButtonsRef.current.has(action.button)) return false;
+        appliedSceneButtonsRef.current.add(action.button);
+        return true;
+      });
+      if (fresh.length) run(fresh);
+    }
 
     try {
       const activeContext = {
@@ -152,12 +163,7 @@ export function AgentConversation({
         },
         (event, data) => {
           if (event === "tool" && data?.name === "control_scene") {
-            const sceneActions = actionsFromControlScene(data.input);
-            const sceneKey = JSON.stringify(sceneActions);
-            if (sceneActions.length && appliedSceneKeyRef.current !== sceneKey) {
-              appliedSceneKeyRef.current = sceneKey;
-              run(sceneActions);
-            }
+            runSceneActions(actionsFromControlScene(data.input));
           }
           if (event === "tool") {
             patchAssistantAt(assistantIndex, (message) => {
@@ -197,11 +203,7 @@ export function AgentConversation({
       }));
 
       if (Array.isArray(result.actions) && result.actions.length > 0) {
-        const sceneKey = JSON.stringify(result.actions);
-        if (appliedSceneKeyRef.current !== sceneKey) {
-          appliedSceneKeyRef.current = sceneKey;
-          run(result.actions);
-        }
+        runSceneActions(result.actions);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
@@ -213,14 +215,6 @@ export function AgentConversation({
   }
 
   function handleSubmit(content) {
-    if (pathname?.startsWith("/pitch")) {
-      const sceneActions = actionsFromPlaybackText(content);
-      const sceneKey = JSON.stringify(sceneActions);
-      if (sceneActions.length && appliedSceneKeyRef.current !== sceneKey) {
-        appliedSceneKeyRef.current = sceneKey;
-        run(sceneActions);
-      }
-    }
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
       const assistantIndex = nextMessages.length;

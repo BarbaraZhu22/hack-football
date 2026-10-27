@@ -39,6 +39,10 @@ function createInitialSceneState() {
       time: null,
       seq: 0,
     },
+    uiPress: {
+      button: "",
+      seq: 0,
+    },
   };
 }
 
@@ -115,6 +119,17 @@ export function applySceneAction(state, action) {
         },
       };
     }
+    case "ui.press": {
+      const button = String(action.button || "").trim().toLowerCase();
+      if (!button) return state;
+      return {
+        ...state,
+        uiPress: {
+          button,
+          seq: (state.uiPress?.seq ?? 0) + 1,
+        },
+      };
+    }
     case "pitch.overlay.set":
       if (!Object.hasOwn(state.overlays, action.key)) return state;
       return {
@@ -131,46 +146,10 @@ export function applySceneAction(state, action) {
   }
 }
 
-export function actionsFromPlaybackText(text) {
-  const source = String(text || "");
-  const timed = source.match(/(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/i)
-    || source.match(/\b(?:play|resume|seek|jump|scrub|go to)\s+(\d+(?:\.\d+)?)/i);
-  const seconds = timed ? Number(timed[1]) : null;
-  const hasTime = Number.isFinite(seconds);
-  if (/\b(play|resume)\b/i.test(source)) {
-    if (!hasTime) return [{ type: "incident.playback", playing: true }];
-    return [
-      { type: "incident.seek", time: seconds },
-      { type: "incident.playback", playing: true, time: seconds },
-    ];
-  }
-  if (/\b(seek|jump|scrub|go to)\b/i.test(source) && hasTime) {
-    return [{ type: "incident.seek", time: seconds }];
-  }
-  if (/\b(pause|stop)\b/i.test(source)) {
-    return [{ type: "incident.playback", playing: false }];
-  }
-  return [];
-}
-
 export function actionsFromControlScene(input = {}) {
-  const command = String(input.command || "").trim().toLowerCase();
-  const time = Number(input.time_seconds);
-  const hasTime = Number.isFinite(time) && time >= 0;
-  if (command === "play" || command === "resume") {
-    if (!hasTime) return [{ type: "incident.playback", playing: true }];
-    return [
-      { type: "incident.seek", time },
-      { type: "incident.playback", playing: true, time },
-    ];
-  }
-  if (command === "pause" || command === "stop") {
-    return [{ type: "incident.playback", playing: false }];
-  }
-  if (command === "seek" && hasTime) {
-    return [{ type: "incident.seek", time }];
-  }
-  return [];
+  const button = String(input.button || "").trim().toLowerCase();
+  if (!button) return [];
+  return [{ type: "ui.press", button }];
 }
 
 export function applySceneActions(state, actions) {

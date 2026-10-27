@@ -52,6 +52,27 @@ def take_ui_analysis() -> dict[str, Any] | None:
     return _UI_ANALYSIS.get()
 
 
+def materialize_ui_analysis_from_payload(payload: dict[str, Any] | None) -> None:
+    """Rebuild the card on this task.
+
+    Sync tools run in a worker thread, so a ContextVar set inside show_analysis
+    is invisible to the request that renders the chat stream.
+    """
+    if take_ui_analysis() or not isinstance(payload, dict):
+        return
+    reviews = payload.get("reviews", "[]")
+    if isinstance(reviews, (list, dict)):
+        reviews = json.dumps(reviews, ensure_ascii=False)
+    elif not isinstance(reviews, str):
+        reviews = "[]"
+    show_analysis_json(
+        str(payload.get("incident_type") or payload.get("incidentType") or ""),
+        str(payload.get("ruling") or ""),
+        str(payload.get("summary") or ""),
+        reviews,
+    )
+
+
 def clear_ui_analysis() -> None:
     _UI_ANALYSIS.set(None)
 

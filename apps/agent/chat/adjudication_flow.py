@@ -11,14 +11,14 @@ from chat.analysis import (
     bind_precedent_types,
     bind_rule_criteria,
     clear_ui_analysis,
+    materialize_ui_analysis_from_payload,
     reset_catalog,
     reset_precedent_types,
     reset_rule_criteria,
 )
 from chat.constants import INCIDENT_PRECEDENT_TYPES
-from chat.analysis import show_analysis_json, take_ui_analysis
 from chat.tool_trace import extract_tool_calls
-from chat.tools import ADJUDICATION_TOOLS, DESK_TOOLS
+from chat.tools import ADJUDICATION_TOOLS, DESK_TOOLS, PITCH_DESK_TOOLS
 from chat.workflow import aggregate_catalog, catalog_context_message, catalog_tool_events, run_catalog_lookups
 from providers.foundry_client import build_chat_client
 
@@ -39,16 +39,25 @@ DESK_INSTRUCTIONS = (
     "You are the Football Desk assistant for a football-themed workspace. "
     "Answer in clear, conversational English. Keep ordinary replies short. "
     "On the pitch incident tab, use get_incident_capture for contact metrics and video feed details before guessing. "
-    "Use control_scene to change camera (broadcast, touchline, tactical, referee, free), seek or play the incident clip, "
-    "pause playback, toggle overlays (skeleton, labels, trajectory, forces, dual), highlight a player id, reset the view, or clear_arrows. "
-    "Incident time is seconds within the clip (about 0 to 3.3), not the match clock. "
-    "When the user says play, resume, pause, or jump to a time like 1.97s, call control_scene with command play, pause, or seek and time_seconds. "
-    "After control_scene, briefly confirm what changed."
+    "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene before you answer. "
+    "Pick the button yourself and pass button only. Do not calculate times or camera coordinates. "
+    "Do not ask the user to press a control, and do not offer a list of angles for them to choose. "
+    "If they name a view, call that button even when the scene is already on it. "
+    "Cameras: camera.broadcast, camera.touchline, camera.tactical, camera.referee, camera.free. "
+    "Overlays: overlay.skeleton, overlay.trajectory, overlay.forces, overlay.labels. "
+    "Markers: marker.sprint, marker.commit, marker.contact, marker.ball, marker.ground, marker.stop, marker.whistle, marker.rise. "
+    "Speed: rate.0.25, rate.0.5, rate.1. "
+    "Transport: transport.play, transport.pause, transport.restart, transport.step_back, transport.step_forward. "
+    "After control_scene returns, confirm in one short sentence and stop."
 )
 
 FOLLOWUP_INSTRUCTIONS = (
     "You are the Football Desk assistant. Answer follow-up questions in one or two sentences. "
-    "Do not call show_analysis or request catalog lookups unless the user asks for a new ruling."
+    "Do not call show_analysis or request catalog lookups unless the user asks for a new ruling. "
+    "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene with one button. "
+    "Pick the button yourself. Do not ask the user to press it or to choose an angle. "
+    "If they name a view, call that button even when the scene is already on it. "
+    "After control_scene returns, confirm in one short sentence and stop."
 )
 
 
@@ -78,7 +87,7 @@ def _followup_agent() -> Agent:
         client=build_chat_client(),
         name="FootballDeskFollowup",
         instructions=FOLLOWUP_INSTRUCTIONS,
-        tools=[],
+        tools=PITCH_DESK_TOOLS,
     )
 
 
@@ -139,27 +148,6 @@ def extract_adjudication_facts_from_body(body: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def _materialize_analysis_from_tool_calls(result: Any) -> None:
-    if take_ui_analysis():
-        return
-    for call in extract_tool_calls(result):
-        if call.get("name") != "show_analysis":
-            continue
-        payload = call.get("input") or {}
-        reviews = payload.get("reviews", "[]")
-        if isinstance(reviews, (list, dict)):
-            reviews = json.dumps(reviews, ensure_ascii=False)
-        elif not isinstance(reviews, str):
-            reviews = "[]"
-        show_analysis_json(
-            str(payload.get("incident_type") or payload.get("incidentType") or ""),
-            str(payload.get("ruling") or ""),
-            str(payload.get("summary") or ""),
-            reviews,
-        )
-        return
-
-
 def adjudication_messages(facts: dict[str, Any], catalog_calls, user_messages: list[Message]) -> list[Message]:
     payload = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
     return [
@@ -195,7 +183,10 @@ async def run_adjudication_agent(
             [Message(role="user", contents=user_text.strip() or "Provide your ruling for this incident.")],
         )
         result = await _adjudication_agent().run(messages)
-        _materialize_analysis_from_tool_calls(result)
+        for call in extract_tool_calls(result):
+            if call.get("name") == "show_analysis":
+                materialize_ui_analysis_from_payload(call.get("input"))
+                break
         tool_calls = [*catalog_tool_events(catalog_calls), *extract_tool_calls(result)]
         return tool_calls, result
     finally:
