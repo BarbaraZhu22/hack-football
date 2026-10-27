@@ -7,6 +7,7 @@ from typing import Any
 from agent_framework import Agent, Message
 from dotenv import load_dotenv
 
+from chat.analysis import bind_precedent_types, reset_precedent_types
 from chat.catalog import precedents_json, rules_json
 from chat.sse import format_sse
 from chat.stream_events import extract_analysis, parse_function_call
@@ -50,8 +51,9 @@ PREFETCHED_INSTRUCTIONS = (
     "You are the Football Desk assistant. Answer in clear, conversational English. "
     "Reference rules and precedents for this incident are already in the conversation and are complete. "
     "Do not call search_rules or search_precedents. "
-    "When giving a referee decision, call show_analysis once with the incident type, your ruling, "
-    "and a one-sentence summary, then write the reasoning. "
+    "When giving a referee decision, call show_analysis once with incident_type set to a precedent id "
+    "from the reference list, such as serious_foul_play, never the ruling sentence. "
+    "Then pass the ruling and a one-sentence summary, and write the reasoning. "
     "Do not write any user-visible text before show_analysis finishes. "
     "In that reasoning, name two or three closest precedents from the reference list and say how this call compares. "
     "Do not list every case, and do not state a count or percentage; the UI computes those from show_analysis. "
@@ -220,6 +222,7 @@ async def chat_stream(
         return
 
     material = _reference_material((context or {}).get("minuteContext"))
+    precedent_token = bind_precedent_types((material or {}).get("precedentTypes"))
     run_messages = [*framework_messages, *_context_messages(context, material)]
     agent = _prefetched_agent() if material is not None else _desk_agent()
     stream = agent.run(run_messages, stream=True)
@@ -299,3 +302,5 @@ async def chat_stream(
         if not _is_rate_limited(error):
             raise
         yield format_sse("error", {"message": BUSY_MESSAGE})
+    finally:
+        reset_precedent_types(precedent_token)

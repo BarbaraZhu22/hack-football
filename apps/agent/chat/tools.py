@@ -18,7 +18,7 @@ def search_rules(incident_type: str) -> str:
 
 @tool
 def show_analysis(incident_type: str, ruling: str, summary: str) -> str:
-    """Publish structured ruling analysis for the Smart assistant UI after reference lookups."""
+    """Publish the ruling card. incident_type is a precedent id such as serious_foul_play, not the ruling text."""
     return smart_analysis_json(incident_type.strip(), ruling, summary)
 
 

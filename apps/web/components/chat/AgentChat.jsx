@@ -55,7 +55,8 @@ function createStreamingAssistant() {
 function AssistantReply({ message }) {
   const showLoading = message.phase === "loading" && !message.toolCalls.length && !message.thinking;
   const hasAnalysis = Boolean(message.analysis?.ruling);
-  const showThinking = Boolean(message.thinking) && (message.phase !== "done" || hasAnalysis);
+  const thinkingPending = message.phase !== "done" && !message.thinking && message.toolCalls.length > 0;
+  const showThinking = thinkingPending || (Boolean(message.thinking) && (message.phase !== "done" || hasAnalysis));
   const showPlainReply = message.phase === "done" && !hasAnalysis && message.content;
 
   return (
@@ -65,7 +66,8 @@ function AssistantReply({ message }) {
       {showThinking ? (
         <ThinkingBlock
           text={message.thinking}
-          open={message.thinkingOpen}
+          pending={thinkingPending}
+          open={thinkingPending || message.thinkingOpen}
           onToggle={() => {
             message.onToggleThinking?.();
           }}
@@ -135,12 +137,16 @@ export function AgentConversation({
             });
           }
           if (event === "thinking" && data?.delta) {
-            patchAssistantAt(assistantIndex, (message) => ({
-              ...message,
-              phase: "streaming",
-              thinkingOpen: true,
-              thinking: `${message.thinking}${data.delta}`,
-            }));
+            patchAssistantAt(assistantIndex, (message) => {
+              const next = `${message.thinking}${data.delta}`;
+              if (!next.trim()) return message;
+              return {
+                ...message,
+                phase: "streaming",
+                thinkingOpen: true,
+                thinking: message.thinking ? next : next.trimStart(),
+              };
+            });
           }
         },
       );
