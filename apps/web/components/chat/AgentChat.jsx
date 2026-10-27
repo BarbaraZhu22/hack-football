@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { sendChatMessage } from "@/lib/agent-client";
+import { usePitchChatContext } from "@/lib/pitch-chat-context";
 import { useScene } from "@/lib/scene/SceneProvider";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -273,6 +274,7 @@ export function AgentConversation({
 
 export default function AgentChat() {
   const pathname = usePathname();
+  const pitchContext = usePitchChatContext();
 
   return (
     <Card className="flex h-full min-h-[280px] flex-col overflow-hidden">
@@ -283,7 +285,12 @@ export default function AgentChat() {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-        <AgentConversation />
+        <AgentConversation
+          context={{
+            tab: tabFromPathname(pathname),
+            ...(pitchContext ? { pitch: pitchContext } : {}),
+          }}
+        />
       </CardContent>
     </Card>
   );

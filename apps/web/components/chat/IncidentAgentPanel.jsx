@@ -12,6 +12,7 @@ import { ACTUAL_DECISION, CRITERIA } from "@/lib/incident";
 import { getAdjudicatorResultTemplate, getRecordedDecision } from "@/lib/adjudication";
 import { useIncidentReview } from "@/lib/incident-review-context";
 import { streamAdjudication } from "@/lib/match-ai";
+import { usePitchChatContext } from "@/lib/pitch-chat-context";
 import { ToolInvocationList } from "@/components/ui/tool-invocation";
 
 import { PRECEDENT_TYPES } from "@/lib/precedent-types";
@@ -494,6 +495,8 @@ export default function IncidentAgentPanel() {
         },
       };
 
+  const pitchContext = usePitchChatContext();
+
   const chatIncident = review?.incident
     ? {
         incidentId: review.incident.incidentId,
@@ -665,7 +668,11 @@ export default function IncidentAgentPanel() {
             <AgentConversation
               initialMessage={null}
               placeholder="Ask about this incident…"
-              context={chatIncident ? { incident: chatIncident } : undefined}
+              context={{
+                tab: "pitch",
+                ...(pitchContext ? { pitch: pitchContext } : {}),
+                ...(chatIncident ? { incident: chatIncident } : {}),
+              }}
             />
           </div>
         </section>

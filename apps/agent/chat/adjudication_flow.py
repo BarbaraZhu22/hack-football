@@ -18,7 +18,7 @@ from chat.analysis import (
 from chat.constants import INCIDENT_PRECEDENT_TYPES
 from chat.analysis import show_analysis_json, take_ui_analysis
 from chat.tool_trace import extract_tool_calls
-from chat.tools import ADJUDICATION_TOOLS
+from chat.tools import ADJUDICATION_TOOLS, DESK_TOOLS
 from chat.workflow import aggregate_catalog, catalog_context_message, catalog_tool_events, run_catalog_lookups
 from providers.foundry_client import build_chat_client
 
@@ -38,7 +38,10 @@ ADJUDICATION_INSTRUCTIONS = (
 DESK_INSTRUCTIONS = (
     "You are the Football Desk assistant for a football-themed workspace. "
     "Answer in clear, conversational English. Keep ordinary replies short. "
-    "You cannot control the 3D scene in this build."
+    "On the pitch incident tab, use get_incident_capture for contact metrics and video feed details before guessing. "
+    "Use control_scene to change camera (broadcast, touchline, tactical, referee, free), seek incident time in seconds, "
+    "toggle overlays (skeleton, labels, trajectory, forces, dual), highlight a player id, reset the view, or clear_arrows. "
+    "After control_scene, briefly confirm what changed."
 )
 
 FOLLOWUP_INSTRUCTIONS = (
@@ -63,7 +66,7 @@ def _desk_agent() -> Agent:
         client=build_chat_client(),
         name="FootballDeskAgent",
         instructions=DESK_INSTRUCTIONS,
-        tools=[],
+        tools=DESK_TOOLS,
     )
 
 

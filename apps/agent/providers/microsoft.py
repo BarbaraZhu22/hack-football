@@ -27,6 +27,8 @@ from chat.analysis import (
 from chat.sse import format_sse
 from chat.stream_events import extract_analysis, parse_function_call
 from chat.tool_trace import extract_tool_calls
+from chat.tools import materialize_control_scene_calls
+from chat.pitch_context import bind_pitch_context, bind_scene_actions, reset_pitch_context, reset_scene_actions, take_scene_actions
 from chat.workflow import aggregate_catalog, catalog_tool_events
 from providers.foundry_client import build_chat_client
 
@@ -227,6 +229,8 @@ async def _stream_agent(
     elif text_buffer:
         text_buffer.clear()
 
+    materialize_control_scene_calls(final)
+
     text = (final.text or streamed_text or "").strip()
     if not text:
         yield format_sse("error", {"message": "Foundry returned an empty response."})
@@ -236,7 +240,7 @@ async def _stream_agent(
         "done",
         {
             "message": {"role": "assistant", "content": text},
-            "actions": [],
+            "actions": take_scene_actions(),
             "toolCalls": [*prefetched_calls, *extract_tool_calls(final)],
             "analysis": extract_analysis(final),
         },
@@ -284,6 +288,8 @@ async def chat_stream(
 
     agent = _followup_agent() if (context or {}).get("minuteContext") else _desk_agent()
     run_messages = [*framework_messages, *_context_messages(context, adjudicate=False)]
+    pitch_token = bind_pitch_context((context or {}).get("pitch"))
+    scene_token = bind_scene_actions()
     try:
         async for event in _stream_agent(agent, run_messages, []):
             yield event
@@ -293,3 +299,6 @@ async def chat_stream(
         if not _is_rate_limited(error):
             raise
         yield format_sse("error", {"message": BUSY_MESSAGE})
+    finally:
+        reset_scene_actions(scene_token)
+        reset_pitch_context(pitch_token)
