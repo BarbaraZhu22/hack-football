@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
+import { useIncidentReview } from "@/lib/incident-review-context";
 import { MATCH } from "@/lib/incident";
 import { buildSimulation } from "@/lib/incident-simulation";
 import { buildOffsideSimulation } from "@/lib/offside-simulation";
@@ -12,6 +13,7 @@ export function usePitchChatContext() {
   const pathname = usePathname();
   const params = useSearchParams();
   const { state } = useScene();
+  const { review } = useIncidentReview();
 
   return useMemo(() => {
     if (!pathname?.startsWith("/pitch")) return null;
@@ -19,6 +21,7 @@ export function usePitchChatContext() {
     const incidentId = params.get("incident") || "tackle";
     const sim = incidentId === "offside" ? buildOffsideSimulation() : buildSimulation();
     const offside = sim.kind === "offside";
+    const assessment = review?.incident?.id === incidentId ? review.assessment : sim.offside;
 
     return {
       incidentId,
@@ -35,9 +38,8 @@ export function usePitchChatContext() {
           },
       offside: offside
         ? {
-            reviewFrame: "pass_release",
-            receiverMarginM: Number(sim.offside.receiverMargin.toFixed(2)),
-            offside: sim.offside.receiverMargin > 0,
+            reviewFrame: "current_playback_frame",
+            assessment,
           }
         : null,
       video: {
@@ -64,5 +66,7 @@ export function usePitchChatContext() {
     state.incident?.contactTime,
     state.incident?.duration,
     state.overlays,
+    review?.incident?.id,
+    review?.assessment,
   ]);
 }

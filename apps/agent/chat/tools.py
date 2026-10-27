@@ -28,7 +28,7 @@ def show_analysis(incident_type: str, ruling: str, summary: str, reviews: str = 
 
 @tool
 def get_incident_capture() -> str:
-    """Return contact reconstruction metrics, video feed metadata, and current viewport scene state for the pitch incident."""
+    """Return the current-frame offside assessment or contact metrics, video metadata, and viewport state for the pitch incident."""
     return pitch_snapshot_json()
 
 

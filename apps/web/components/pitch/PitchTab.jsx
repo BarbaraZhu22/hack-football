@@ -237,7 +237,7 @@ function timecode(time) {
   return `00:0${seconds}.${String(centiseconds).padStart(2, "0")}`;
 }
 
-function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation, time, timeRef }) {
+function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation, time, timeRef, onTimeChange }) {
   const [displayTime, setDisplayTime] = useState(time);
   const activeEvent = simulation.events.reduce(
     (current, event) => (event.t <= displayTime ? event : current),
@@ -253,15 +253,17 @@ function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation
     let request = 0;
     let lastUpdate = 0;
     const update = (now) => {
-      if (now - lastUpdate >= 1000 / 12) {
-        setDisplayTime(timeRef.current);
+      if (now - lastUpdate >= 1000 / 30) {
+        const currentTime = timeRef.current;
+        setDisplayTime(currentTime);
+        onTimeChange?.(currentTime);
         lastUpdate = now;
       }
       request = requestAnimationFrame(update);
     };
     request = requestAnimationFrame(update);
     return () => cancelAnimationFrame(request);
-  }, [playing, time, timeRef]);
+  }, [onTimeChange, playing, time, timeRef]);
 
   function togglePlayback() {
     if (!playing && timeRef.current >= simulation.duration) seek(0);
@@ -724,6 +726,7 @@ export default function PitchTab() {
             simulation={simulation}
             time={time}
             timeRef={timeRef}
+            onTimeChange={isOffside ? setOffsideTime : undefined}
           />
         </div>
 

@@ -14,6 +14,10 @@ import { getBodyModelUrl, getClipUrl } from "./actions/catalog";
 import { createRunPlayer, retargetRun, setRunTime } from "./actions/retarget";
 import { sampleOffsideFrame } from "@/lib/offside-simulation";
 import {
+  OFFSIDE_ELIGIBLE_BODY_PARTS,
+  measureLeadingBodyPointZ,
+} from "@/lib/offside-assessment";
+import {
   calculateBallisticReleaseVelocity,
   calculateOffsideKick,
   OFFSIDE_PASS_FLIGHT_DURATION,
@@ -22,20 +26,6 @@ import {
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const smooth = (t) => t * t * (3 - 2 * t);
 const KICK_CONTACT_SPEED_MULTIPLIER = 1.95;
-const OFFSIDE_LINE_PARTS = [
-  ["head", 0.12],
-  ["chest", 0.15],
-  ["pelvis", 0.14],
-  ["thighL", 0.09],
-  ["thighR", 0.09],
-  ["calfL", 0.07],
-  ["calfR", 0.07],
-  ["footL", 0.06],
-  ["footR", 0.06],
-  ["toeL", 0.035],
-  ["toeR", 0.035],
-];
-
 function carryBallPosition(sim, time, target = new THREE.Vector3(), frameBuffer) {
   const frame = sampleOffsideFrame(sim, clamp(time, 0, sim.contactT), frameBuffer);
   const lead = 0.25 + 0.14 * smooth(clamp(time / sim.contactT, 0, 1));
@@ -217,8 +207,8 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
       if (object.isBone) poseBones.push({ bone: object, quaternion: new THREE.Quaternion() });
     });
     poseBufferRef.current = { bones: poseBones, pelvisPosition: new THREE.Vector3() };
-    if (role === "defender") {
-      lineBonesRef.current = OFFSIDE_LINE_PARTS
+    if (role === "defender" || role === "receiver") {
+      lineBonesRef.current = OFFSIDE_ELIGIBLE_BODY_PARTS
         .map(([key, extent]) => rig.bones[key] ? { bone: rig.bones[key], extent } : null)
         .filter(Boolean);
       linePointsRef.current = lineBonesRef.current.map(() => new THREE.Vector3());
@@ -255,22 +245,18 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
     const frame = sampleOffsideFrame(sim, poseTime, sampledFrameRef.current);
     applyPoseAtTime({ sim, time: poseTime, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer: poseBufferRef.current, sampledFrame: frame });
 
-    if (role === "defender" && lineRef?.current) {
+    if ((role === "defender" || role === "receiver") && lineRef?.current) {
       const forward = actorGroup.getWorldDirection(lineForwardRef.current);
-      let leadingBodyZ = -Infinity;
-      const lineBones = lineBonesRef.current;
-      const linePoints = linePointsRef.current;
-      for (let index = 0; index < lineBones.length; index += 1) {
-        const part = lineBones[index];
-        const point = part.bone.getWorldPosition(linePoints[index]);
-        leadingBodyZ = Math.max(leadingBodyZ, point.z + part.extent * forward.z);
+      const leadingBodyZ = measureLeadingBodyPointZ(
+        lineBonesRef.current,
+        linePointsRef.current,
+        forward.z,
+      );
+      if (role === "receiver") {
+        lineRef.current.receiverLeadingPointZ = leadingBodyZ;
+      } else {
+        lineRef.current.secondLastOpponentLeadingPointZ = leadingBodyZ;
       }
-      const ballZ = Math.max(sim.offside.ballZ, ballStateRef?.current?.position?.z ?? -Infinity);
-      const lineZ = Math.max(ballZ, leadingBodyZ);
-      lineRef.current.z = lineZ;
-      sim.offside.lineZ = lineZ;
-      sim.offside.receiverMargin = frame.receiver.z + 0.24 - lineZ;
-      sim.offside.receiverAhead = sim.offside.receiverMargin > 0;
     }
 
     if (role === "passer" && ballStateRef?.current) {
@@ -351,6 +337,9 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
       state.previousPosition.copy(ballPosition);
       state.previousKickPosition.copy(kickBall);
       state.previousTime = poseTime;
+      if (lineRef?.current) {
+        lineRef.current.ballCurrentZ = state.position.z;
+      }
     }
 
     if (rig.bones.head) {

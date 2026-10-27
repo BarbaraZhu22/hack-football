@@ -12,6 +12,7 @@ import { OffsideMotionOverlay } from './OffsideMotionOverlay';
 import { KITS } from './kit';
 import { sampleFrame } from '@/lib/incident-simulation';
 import { sampleOffsideFrame } from '@/lib/offside-simulation';
+import { calculateOffsideAssessment } from '@/lib/offside-assessment';
 const BG = '#071210';
 const PRESETS = {
     broadcast: { pos: [19.9, 4.2, 7.2], target: [27.55, 0.82, 10.0], fov: 40 },
@@ -21,10 +22,32 @@ const PRESETS = {
 };
 function OffsideLine({ sim, timeRef, lineRef }) {
     const projection = useRef(null);
+    const sampledFrame = useRef({});
     useFrame(() => {
+        const state = lineRef?.current;
+        if (state) {
+            const time = Math.max(0, Math.min(sim.duration, Number(timeRef.current) || 0));
+            const frame = sampleOffsideFrame(sim, time, sampledFrame.current);
+            const hasPoseMeasurements = Number.isFinite(state.ballCurrentZ)
+                && Number.isFinite(state.receiverLeadingPointZ)
+                && Number.isFinite(state.secondLastOpponentLeadingPointZ);
+            const assessment = calculateOffsideAssessment({
+                ballZ: Number.isFinite(state.ballCurrentZ) ? state.ballCurrentZ : frame.ball.p.z,
+                receiverLeadingPointZ: Number.isFinite(state.receiverLeadingPointZ)
+                    ? state.receiverLeadingPointZ
+                    : frame.receiver.z + 0.24,
+                secondLastOpponentZ: Number.isFinite(state.secondLastOpponentLeadingPointZ)
+                    ? state.secondLastOpponentLeadingPointZ
+                    : frame.defender.z + 0.28,
+                measurementSource: hasPoseMeasurements ? 'three_d_pose' : 'simulation_proxy',
+                reviewTimeSeconds: time,
+            });
+            Object.assign(sim.offside, assessment, { secondLastOpponent: 'defender' });
+            state.z = assessment.lineZ;
+        }
         if (projection.current) {
-            projection.current.visible = timeRef.current >= sim.contactT;
-            projection.current.position.z = lineRef?.current?.z ?? sim.offside.lineZ;
+            projection.current.visible = true;
+            projection.current.position.z = state?.z ?? sim.offside.lineZ;
         }
     });
     return (_jsxs('group', { ref: projection, position: [0, 0, sim.offside.lineZ], children: [
@@ -59,7 +82,13 @@ function SceneContents({ sim, timeRef, cameraPreset, showSkeleton, showLabels, s
     const offsideBallRef = useRef(null);
     const offsideCameraRef = useRef(null);
     if (isOffside && offsideLineRef.current?.sim !== sim) {
-        offsideLineRef.current = { sim, z: sim.offside.lineZ };
+        offsideLineRef.current = {
+            sim,
+            z: sim.offside.lineZ,
+            ballCurrentZ: null,
+            receiverLeadingPointZ: null,
+            secondLastOpponentLeadingPointZ: null,
+        };
         offsideCameraRef.current = {
             sim,
             contactWallTime: null,

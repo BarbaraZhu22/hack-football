@@ -145,12 +145,13 @@ export function ContactEnvelope({ sim, variant = "viewport" }) {
 export function OffsideEnvelope({ sim, variant = "viewport" }) {
   const className = variant === "panel" ? styles.eventCardPanel : styles.eventCard;
   const margin = sim.offside.receiverMargin;
+  const time = Number(sim.offside.reviewTimeSeconds ?? 0);
 
   return (
     <section className={className}>
       <div className={styles.eventCardHead}><Crosshair size={13} /> OFFSIDE REVIEW</div>
       <div className={styles.eventRows}>
-        <div><span>Review frame</span><b>PASS RELEASE</b></div>
+        <div><span>Playback frame</span><b>{time.toFixed(2)} <small>s</small></b></div>
         <div><span>Second-last opponent</span><b>MCI #16</b></div>
         <div><span>Receiver position</span><b className={margin > 0 ? styles.danger : ""}>{margin > 0 ? "OFFSIDE" : "ONSIDE"}</b></div>
         <div><span>Goalward margin</span><b>{margin >= 0 ? "+" : ""}{margin.toFixed(2)} <small>m</small></b></div>

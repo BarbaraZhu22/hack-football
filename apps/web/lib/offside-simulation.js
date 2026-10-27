@@ -1,3 +1,5 @@
+import { calculateOffsideAssessment } from "@/lib/offside-assessment";
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
 function mixActorInto(target, left, right, amount) {
@@ -70,17 +72,21 @@ export function buildOffsideSimulation() {
     frames.push(frame);
   }
 
-  const releaseFrame = frames[Math.round(RELEASE_TIME / DT)];
+  const initialFrame = frames[0];
   // Opponents are ordered from nearest to farthest from their own goal line.
   // Here the goalkeeper is last and the blue defender is second-last.
   const opponentsByGoalDistance = [
-    { role: "defender", z: releaseFrame.defender.z + 0.28 },
-    { role: "goalkeeper", z: releaseFrame.goalkeeper.z + 0.28 },
+    { role: "defender", z: initialFrame.defender.z + 0.28 },
+    { role: "goalkeeper", z: initialFrame.goalkeeper.z + 0.28 },
   ].sort((a, b) => b.z - a.z);
   const secondLastOpponent = opponentsByGoalDistance[1];
-  const lineZ = Math.max(releaseFrame.ball.p.z, secondLastOpponent.z);
-  const receiverLeadingPointZ = releaseFrame.receiver.z + 0.24;
-  const receiverMargin = receiverLeadingPointZ - lineZ;
+  const receiverLeadingPointZ = initialFrame.receiver.z + 0.24;
+  const assessment = calculateOffsideAssessment({
+    ballZ: initialFrame.ball.p.z,
+    receiverLeadingPointZ,
+    secondLastOpponentZ: secondLastOpponent.z,
+    reviewTimeSeconds: 0,
+  });
 
   return {
     kind: "offside",
@@ -90,16 +96,8 @@ export function buildOffsideSimulation() {
     passStartT: PASS_START,
     passLocalReleaseT: BALL_RELEASE_LOCAL_TIME,
     offside: {
-      lineZ,
+      ...assessment,
       secondLastOpponent: secondLastOpponent.role,
-      secondLastOpponentZ: secondLastOpponent.z,
-      ballZ: releaseFrame.ball.p.z,
-      receiverLeadingPointZ,
-      receiverInOpponentsHalf: receiverLeadingPointZ > 0,
-      aheadOfBall: receiverLeadingPointZ > releaseFrame.ball.p.z,
-      aheadOfSecondLastOpponent: receiverLeadingPointZ > secondLastOpponent.z,
-      receiverMargin,
-      receiverAhead: receiverMargin > 0,
     },
     events: [
       {
@@ -127,7 +125,7 @@ export function buildOffsideSimulation() {
         t: RELEASE_TIME,
         lane: "ball",
         tone: "danger",
-        detail: "The ball leaves the boot at the event-table pass timestamp; the receiver is fractionally beyond the second-last opponent.",
+        detail: "The ball leaves the boot; eligible body points are compared with the ball and second-last-opponent line at this frame.",
       },
     ],
     meta: {

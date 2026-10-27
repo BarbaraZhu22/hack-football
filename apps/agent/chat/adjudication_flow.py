@@ -38,7 +38,7 @@ ADJUDICATION_INSTRUCTIONS = (
 DESK_INSTRUCTIONS = (
     "You are the Football Desk assistant for a football-themed workspace. "
     "Answer in clear, conversational English. Keep ordinary replies short. "
-    "On the pitch incident tab, use get_incident_capture for contact metrics and video feed details before guessing. "
+    "On the pitch incident tab, use get_incident_capture for contact metrics, the current-frame offside assessment, and video feed details before guessing. "
     "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene before you answer. "
     "Pick the button yourself and pass button only. Do not calculate times or camera coordinates. "
     "Do not ask the user to press a control, and do not offer a list of angles for them to choose. "
@@ -53,6 +53,7 @@ DESK_INSTRUCTIONS = (
 
 FOLLOWUP_INSTRUCTIONS = (
     "You are the Football Desk assistant. Answer follow-up questions in one or two sentences. "
+    "For questions about the offside position or margin, call get_incident_capture and use its current-playback-frame assessment. "
     "Do not call show_analysis or request catalog lookups unless the user asks for a new ruling. "
     "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene with one button. "
     "Pick the button yourself. Do not ask the user to press it or to choose an angle. "
@@ -145,6 +146,7 @@ def extract_adjudication_facts_from_body(body: dict[str, Any]) -> dict[str, Any]
         "recordedDecision": body.get("recordedDecision") or body.get("decision") or {},
         "eventFacts": body.get("eventFacts") or body.get("event") or {},
         "ruleCriteria": body.get("ruleCriteria") or [],
+        "offsideAssessment": body.get("offsideAssessment") or {},
     }
 
 
