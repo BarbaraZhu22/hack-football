@@ -59,7 +59,7 @@ function AssistantReply({ message }) {
   const showPlainReply = message.phase === "done" && !hasAnalysis && message.content;
 
   return (
-    <div className="space-y-1.5">
+    <div className="w-full min-w-0 space-y-1.5">
       {showLoading ? <ChatPendingIndicator /> : null}
       <ToolInvocationList toolCalls={message.toolCalls} />
       {showThinking ? (
@@ -98,11 +98,9 @@ export function AgentConversation({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const seededRef = useRef(null);
-  const streamIndexRef = useRef(null);
+  const pendingCountRef = useRef(0);
 
-  function patchStreamingAssistant(updater) {
-    const index = streamIndexRef.current;
-    if (index == null) return;
+  function patchAssistantAt(index, updater) {
     setMessages((current) => {
       const next = [...current];
       const target = next[index];
@@ -112,11 +110,10 @@ export function AgentConversation({
     });
   }
 
-  async function dispatchChat(nextMessages) {
+  async function dispatchChat(nextMessages, assistantIndex) {
+    pendingCountRef.current += 1;
     setPending(true);
     setError(null);
-    streamIndexRef.current = nextMessages.length;
-    setMessages((current) => [...current, createStreamingAssistant()]);
 
     try {
       const result = await sendChatMessage(
@@ -126,7 +123,7 @@ export function AgentConversation({
         },
         (event, data) => {
           if (event === "tool") {
-            patchStreamingAssistant((message) => {
+            patchAssistantAt(assistantIndex, (message) => {
               const exists = message.toolCalls.some(
                 (call) => call.name === data.name && JSON.stringify(call.input) === JSON.stringify(data.input),
               );
@@ -138,7 +135,7 @@ export function AgentConversation({
             });
           }
           if (event === "thinking" && data?.delta) {
-            patchStreamingAssistant((message) => ({
+            patchAssistantAt(assistantIndex, (message) => ({
               ...message,
               phase: "streaming",
               thinkingOpen: true,
@@ -148,7 +145,7 @@ export function AgentConversation({
         },
       );
 
-      patchStreamingAssistant((message) => ({
+      patchAssistantAt(assistantIndex, (message) => ({
         ...message,
         phase: "done",
         content: result.message?.content ?? message.thinking,
@@ -163,21 +160,19 @@ export function AgentConversation({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
-      setMessages((current) => {
-        if (streamIndexRef.current == null) return current;
-        return current.filter((_, index) => index !== streamIndexRef.current);
-      });
+      setMessages((current) => current.filter((_, index) => index !== assistantIndex));
     } finally {
-      streamIndexRef.current = null;
-      setPending(false);
+      pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+      setPending(pendingCountRef.current > 0);
     }
   }
 
-  async function handleSubmit(content) {
+  function handleSubmit(content) {
     setMessages((current) => {
       const nextMessages = [...current, { role: "user", content, toolCalls: [] }];
-      void dispatchChat(nextMessages);
-      return nextMessages;
+      const assistantIndex = nextMessages.length;
+      void dispatchChat(nextMessages, assistantIndex);
+      return [...nextMessages, createStreamingAssistant()];
     });
   }
 
@@ -193,7 +188,7 @@ export function AgentConversation({
     <Conversation className={className ?? "min-h-0 flex-1"}>
       <ConversationContent>
         {messages.map((message, index) => (
-          <div key={`${message.role}-${index}`} className="space-y-1">
+          <div key={`${message.role}-${index}`} className="w-full min-w-0 space-y-1">
             {message.role === "assistant" && message.phase ? (
               <AssistantReply
                 message={{
@@ -226,6 +221,7 @@ export function AgentConversation({
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </ConversationContent>
       <PromptInput
+        className="shrink-0"
         disabled={pending}
         onSubmit={(value) => handleSubmit(value)}
         placeholder={placeholder ?? "Ask the agent…"}

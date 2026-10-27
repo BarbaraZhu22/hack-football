@@ -146,7 +146,9 @@ export default function AgentPanel({
     setAssistantSeed({
       key: eventId,
       role: "user",
-      content: `At ${clockLabel}, acting as the referee on this incident: what is your decision, and why in one sentence?`,
+      content:
+        `At ${clockLabel}, acting as the referee on this incident: what is your decision and why? `
+        + "Name two or three of the closest historical cases and how this call compares.",
     });
   }
 

@@ -16,8 +16,8 @@ function Conversation({ className, children, ...props }) {
 
 function ConversationContent({ className, children, ...props }) {
   return (
-    <ScrollArea className={cn("flex-1 px-3", className)} {...props}>
-      <div className="flex flex-col gap-3 py-3">{children}</div>
+    <ScrollArea className={cn("min-h-0 w-full min-w-0 flex-1 px-3", className)} {...props}>
+      <div className="flex w-full min-w-0 flex-col gap-3 py-3">{children}</div>
     </ScrollArea>
   );
 }
