@@ -266,7 +266,47 @@ export default function LiveTrackingFrame({
   return (
     <Card className={mode === "incident" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "shrink-0 overflow-hidden"}>
       <CardHeader className="flex-row shrink-0 items-center justify-between gap-2 space-y-0 py-2">
-        <CardTitle className={`text-sm ${mode === "incident" ? "shrink-0 whitespace-nowrap" : ""}`}>{mode === "incident" ? "2D live" : "Live tracking"}</CardTitle>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <CardTitle className={`shrink-0 text-sm ${mode === "incident" ? "whitespace-nowrap" : ""}`}>{mode === "incident" ? "2D live" : "Live tracking"}</CardTitle>
+          {mode === "live" && frame && displayedStatus ? (
+            <div
+              className="inline-flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border border-white/20 bg-black/75 px-2 py-1 text-white shadow-sm backdrop-blur-sm"
+              role="status"
+              aria-label={[displayedStatus.clock, displayedStatus.label, displayedStatus.detail, displayedStatus.teamCode, displayedStatus.score].filter(Boolean).join(" · ")}
+            >
+              {activeEventPresentation?.clock ? (
+                <span className="shrink-0 desk-type-meta font-semibold text-white/65">{activeEventPresentation.clock}</span>
+              ) : null}
+              {activeEventPresentation?.icon === "card" ? (
+                <CardIcon color={activeEventPresentation.cardColor} size={14} />
+              ) : activeEventPresentation?.icon === "ball" || activeEventPresentation?.icon === "missed-ball" ? (
+                <FootballIcon
+                  size={14}
+                  className={activeEventPresentation.iconColor}
+                  missed={activeEventPresentation.icon === "missed-ball"}
+                />
+              ) : activeEventPresentation?.icon === "whistle" ? (
+                <Whistle className="size-3.5 shrink-0" aria-hidden="true" />
+              ) : situationTeamColor ? (
+                <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: situationTeamColor }} />
+              ) : null}
+              <span className="shrink-0 desk-type-meta font-bold tracking-[0.08em]">{displayedStatus.label}</span>
+              {displayedStatus.detail ? (
+                <span className="min-w-0 truncate desk-type-meta font-medium text-white/85">{displayedStatus.detail}</span>
+              ) : null}
+              {displayedStatus.teamCode ? (
+                <span className="shrink-0 desk-type-meta font-bold" style={{ color: situationTeamColor }}>
+                  {displayedStatus.teamCode}
+                </span>
+              ) : null}
+              {displayedStatus.score ? (
+                <span className="shrink-0 desk-type-meta font-bold text-white">
+                  {displayedStatus.score}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap desk-type-meta font-semibold tabular-nums text-muted-foreground">
           <span className={`size-1.5 rounded-full bg-primary ${mode === "incident" ? "" : "animate-pulse"}`} />
           {frame?.clockLabel || (mode === "incident" ? "—" : "Waiting for frame")}
@@ -275,48 +315,6 @@ export default function LiveTrackingFrame({
       <CardContent className={mode === "incident" ? "flex min-h-0 flex-1 flex-col px-2 pb-2 pt-0" : "py-2"}>
         <div className={`relative w-full overflow-hidden rounded-panel border bg-emerald-800 ${mode === "incident" ? "flex min-h-0 flex-1 items-center justify-center" : "aspect-video"}`} aria-label={mode === "incident" ? "Incident-time 2D player and ball tracking frame" : "Live player and ball tracking frame"}>
           <div className={mode === "incident" ? "relative h-full aspect-[68/111] max-w-full" : "absolute inset-0"}>
-          {mode === "live" && frame ? (
-            <>
-              {displayedStatus ? (
-                <div
-                  className="pointer-events-none absolute left-1/2 top-2 z-40 flex max-w-[calc(100%-16px)] -translate-x-1/2 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border border-white/20 bg-black/75 px-2 py-1 text-white shadow-sm backdrop-blur-sm"
-                  role="status"
-                  aria-label={[displayedStatus.clock, displayedStatus.label, displayedStatus.detail, displayedStatus.teamCode, displayedStatus.score].filter(Boolean).join(" · ")}
-                >
-                  {activeEventPresentation?.clock ? (
-                    <span className="shrink-0 desk-type-meta font-semibold text-white/65">{activeEventPresentation.clock}</span>
-                  ) : null}
-                  {activeEventPresentation?.icon === "card" ? (
-                    <CardIcon color={activeEventPresentation.cardColor} size={14} />
-                  ) : activeEventPresentation?.icon === "ball" || activeEventPresentation?.icon === "missed-ball" ? (
-                    <FootballIcon
-                      size={14}
-                      className={activeEventPresentation.iconColor}
-                      missed={activeEventPresentation.icon === "missed-ball"}
-                    />
-                  ) : activeEventPresentation?.icon === "whistle" ? (
-                    <Whistle className="size-3.5 shrink-0" aria-hidden="true" />
-                  ) : situationTeamColor ? (
-                    <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: situationTeamColor }} />
-                  ) : null}
-                  <span className="shrink-0 desk-type-meta font-bold tracking-[0.08em]">{displayedStatus.label}</span>
-                  {displayedStatus.detail ? (
-                    <span className="min-w-0 truncate desk-type-meta font-medium text-white/85">{displayedStatus.detail}</span>
-                  ) : null}
-                  {displayedStatus.teamCode ? (
-                    <span className="shrink-0 desk-type-meta font-bold" style={{ color: situationTeamColor }}>
-                      {displayedStatus.teamCode}
-                    </span>
-                  ) : null}
-                  {displayedStatus.score ? (
-                    <span className="shrink-0 rounded bg-white/15 px-1 py-0.5 desk-type-meta font-bold text-white">
-                      {displayedStatus.score}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
-          ) : null}
           <svg
             className="absolute inset-0 size-full"
             viewBox={mode === "incident" ? "0 -3 68 111" : "-3 0 111 68"}
@@ -367,6 +365,7 @@ export default function LiveTrackingFrame({
               && frame.ball.fromPlayerId === personId
               && ballDistance <= 3;
             const isPossessing = !isOfficial && (ballControlled && personId === holderId || isReleasing);
+            const labelBelow = mode === "incident" ? actor.x < -3 : actor.y < 0;
             const color = isOfficial
               ? "#facc15"
               : actor.team === "MCI"
@@ -388,7 +387,7 @@ export default function LiveTrackingFrame({
             return (
               <span
                 key={personId || actor.role}
-                className={`absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center ${isPossessing ? "z-40 size-8" : "z-30 size-3"}`}
+                className={`absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center ${isPossessing ? "z-40 size-4" : "z-30 size-3"}`}
                 style={positionStyle}
                 role="img"
                 aria-label={isPossessing ? `${personName} has the ball` : roleLabel}
@@ -401,28 +400,32 @@ export default function LiveTrackingFrame({
                     style={{ backgroundColor: color, opacity: 0.65 }}
                   />
                 ) : null}
-                {isGoalkeeper ? (
-                  <svg
-                    viewBox="0 0 12 12"
-                    className={`relative drop-shadow-sm ${isPossessing ? "size-4" : "size-3"}`}
-                    aria-hidden="true"
-                  >
-                    <path d="M6 0.8 11.2 11H0.8Z" fill={color} stroke="white" strokeWidth={isPossessing ? "1.5" : "1.2"} />
-                  </svg>
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className={`relative block rounded-full ${isPossessing
-                      ? "size-4 border-2 border-white shadow-[0_0_9px_3px_rgba(255,255,255,0.8)]"
-                      : `size-2.5 border shadow-sm ${isOfficial ? "border-amber-100" : "border-white"}`}`}
-                    style={{ backgroundColor: color }}
-                  />
-                )}
-                {isPossessing ? (
-                  <span className="absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-white/40 bg-black/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-md">
-                    {personName}
-                  </span>
-                ) : null}
+                <span className={`relative grid place-items-center ${isPossessing ? "size-4" : "size-3"}`}>
+                  {isGoalkeeper ? (
+                    <svg
+                      viewBox="0 0 12 12"
+                      className={`relative drop-shadow-sm ${isPossessing ? "size-4" : "size-3"}`}
+                      aria-hidden="true"
+                    >
+                      <path d="M6 0.8 11.2 11H0.8Z" fill={color} stroke="white" strokeWidth={isPossessing ? "1.5" : "1.2"} />
+                    </svg>
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className={`relative block rounded-full ${isPossessing
+                        ? "size-4 border-2 border-white shadow-[0_0_9px_3px_rgba(255,255,255,0.8)]"
+                        : `size-2.5 border shadow-sm ${isOfficial ? "border-amber-100" : "border-white"}`}`}
+                      style={{ backgroundColor: color }}
+                    />
+                  )}
+                  {isPossessing ? (
+                    <span
+                      className={`absolute left-1/2 ${labelBelow ? "top-full mt-1.5" : "bottom-full mb-1.5"} -translate-x-1/2 whitespace-nowrap rounded border border-white/40 bg-black/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-md`}
+                    >
+                      {personName}
+                    </span>
+                  ) : null}
+                </span>
               </span>
             );
           })}

@@ -26,14 +26,17 @@ const tooltipClass = "pointer-events-none absolute left-full top-1/2 z-[60] ml-3
 export default function DeskLayout({ children }) {
   const pathname = usePathname();
 
-  // The overview desk hosts the agent in its centre column, so the shared
-  // right-hand rail is dropped there to avoid two live copies of the chat.
-  const showAgentRail = pathname !== "/overview";
+  // Overview and the full-screen game use the whole content area without an agent rail.
+  const isGamePage = pathname === "/tactics";
+  const showAgentRail = pathname !== "/overview" && !isGamePage;
   const isIncidentPage = pathname === "/pitch";
   const AgentPanel = isIncidentPage ? IncidentAgentPanel : AgentChat;
 
   return (
-    <div className="desk-shell flex min-h-dvh bg-background lg:h-dvh lg:overflow-hidden">
+    <div className={cn(
+      "desk-shell flex min-h-dvh bg-background lg:h-dvh lg:overflow-hidden",
+      isGamePage && "h-dvh min-h-0 overflow-hidden",
+    )}>
       <aside className="sticky top-0 z-40 flex h-dvh w-14 shrink-0 flex-col items-center border-r border-border bg-card/95 px-2 py-3 backdrop-blur sm:w-[68px]">
         <Link
           href="/overview"
@@ -69,10 +72,13 @@ export default function DeskLayout({ children }) {
         <div
           className={cn(
             "grid min-h-0 w-full flex-1 gap-3 px-2 py-3 sm:gap-4 sm:px-3 sm:py-4",
+            isGamePage && "gap-0 px-0 py-0",
             showAgentRail && "lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]",
           )}
         >
-          <main className="h-full min-h-0 min-w-0 overflow-y-auto">{children}</main>
+          <main className={cn("h-full min-h-0 min-w-0", isGamePage ? "overflow-hidden" : "overflow-y-auto")}>
+            {children}
+          </main>
 
           {showAgentRail ? (
             <aside className="hidden h-full min-h-0 min-w-0 lg:block">

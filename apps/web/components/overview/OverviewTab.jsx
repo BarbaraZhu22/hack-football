@@ -9,6 +9,7 @@ import LiveTrackingFrame from "@/components/overview/LiveTrackingFrame";
 import EventTimeline, { EventTimelineLegend } from "@/components/overview/EventTimeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FootballIcon } from "@/components/ui/football-icon";
+import { BootIcon, CardIcon, SubIcon } from "./event-icons";
 import { MATCH } from "@/lib/incident";
 import { getIncident, RATINGS } from "@/lib/incidents";
 import { cn } from "@/lib/utils";
@@ -139,6 +140,78 @@ function playerRatingColor(rating) {
   return "#22c55e";
 }
 
+const LINEUP_BADGE_ORDER = { yellow: 0, red: 1, sub: 2, goal: 3, assist: 4 };
+
+function buildLineupEventBadges(events = [], throughSeconds = Number.POSITIVE_INFINITY) {
+  const badgesByPlayerId = new Map();
+  const addBadge = (playerId, type) => {
+    if (!playerId) return;
+    const badges = badgesByPlayerId.get(playerId) || [];
+    const existing = badges.find((badge) => badge.type === type);
+    if (existing) existing.count += 1;
+    else badges.push({ type, count: 1 });
+    badgesByPlayerId.set(playerId, badges);
+  };
+
+  for (const event of events) {
+    const eventSeconds = event.timeSeconds ?? event.clockSeconds ?? (event.timeMilliseconds / 1000);
+    if (Number.isFinite(eventSeconds) && eventSeconds > throughSeconds) continue;
+
+    if (["goal", "penalty-goal", "own-goal"].includes(event.type)) {
+      addBadge(event.playerId, "goal");
+      if (event.type === "goal" && event.assist && event.relatedPlayerId) {
+        addBadge(event.relatedPlayerId, "assist");
+      }
+    } else if (event.type === "yellow" || event.type === "red") {
+      addBadge(event.playerId, event.type);
+    } else if (event.type === "sub" || event.type === "substitution") {
+      addBadge(event.playerId, "sub");
+      addBadge(event.relatedPlayerId, "sub");
+    }
+  }
+
+  for (const badges of badgesByPlayerId.values()) {
+    badges.sort((left, right) => LINEUP_BADGE_ORDER[left.type] - LINEUP_BADGE_ORDER[right.type]);
+  }
+  return badgesByPlayerId;
+}
+
+
+function LineupEventBadge({ badge, player }) {
+  const nearLeftEdge = player.x < 12;
+  const nearRightEdge = player.x > 88;
+  const placements = {
+    yellow: `${nearLeftEdge ? "-right-1" : "-left-1"} top-0 translate-x-0.5`,
+    red: `${nearLeftEdge ? "-right-1" : "-left-1"} -bottom-1.5 translate-x-0.5`,
+    sub: nearLeftEdge
+      ? "left-full top-1/2 ml-0.5 -translate-y-1/2"
+      : "right-full top-1/2 mr-0.5 -translate-y-1/2",
+    goal: nearRightEdge ? "-left-1 -top-px" : "-right-1 -top-px",
+    assist: nearRightEdge ? "-left-1 -bottom-0.5" : "-right-1 -bottom-0.5",
+  };
+  const details = {
+    goal: { label: "Goal", icon: <FootballIcon size={11} className="text-black" />, backing: "size-[11px]" },
+    assist: { label: "Assist", icon: <BootIcon size={8} className="text-black" />, backing: "size-[11px]" },
+    sub: { label: "Substitution", icon: <SubIcon size={7} />, backing: "size-2.5" },
+    yellow: { label: "Yellow card", icon: <CardIcon color="#f5c518" size={11} className="scale-x-110 scale-y-90" /> },
+    red: { label: "Red card", icon: <CardIcon color="#e5484a" size={12} /> },
+  }[badge.type];
+  const label = badge.count > 1 ? `${badge.count} ${details.label.toLowerCase()} events` : details.label;
+
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={`pointer-events-none absolute z-20 ${placements[badge.type]} ${details.backing
+        ? `grid ${details.backing} place-items-center overflow-hidden rounded-full bg-white`
+        : "grid place-items-center"}`}
+    >
+      {details.icon}
+    </span>
+  );
+}
+
 function formatStat(value, unit) {
   return unit ? `${value}${unit}` : String(value);
 }
@@ -165,14 +238,17 @@ function decisionDescription(decision) {
   }
 }
 
-function DecisionRow({ decision, controversial }) {
+function DecisionRow({ decision, assessment, hasNext }) {
   const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
-  const rating = controversial ? RATINGS.red : RATINGS.green;
+  const rating = RATINGS[{ correct: "green", questionable: "amber", controversial: "red" }[assessment]];
   const minuteLabel = (decision.minuteLabel || decision.minute) + "'";
   const description = decisionDescription(decision);
 
   const body = (
     <div className="relative flex gap-2 py-0.5">
+      {hasNext ? (
+        <span className="pointer-events-none absolute -bottom-7 left-3.5 top-4 w-px bg-border" aria-hidden="true" />
+      ) : null}
       <span
         className="relative z-10 grid size-7 shrink-0 place-items-center rounded-full border-2 bg-card"
         style={{ borderColor: rating.color }}
@@ -189,7 +265,7 @@ function DecisionRow({ decision, controversial }) {
           >
             {rating.label}
           </span>
-          {controversial && incident?.status === "active" ? (
+          {assessment === "controversial" && incident?.status === "active" ? (
             <span className="inline-flex items-center gap-1 desk-type-meta font-medium text-primary">
               3D review <ArrowUpRight className="size-3" />
             </span>
@@ -208,7 +284,7 @@ function DecisionRow({ decision, controversial }) {
     </div>
   );
 
-  if (controversial && incident?.status === "active") {
+  if (assessment === "controversial" && incident?.status === "active") {
     return (
       <Link href={`/pitch?incident=${incident.id}`} className="group block rounded-panel px-1 transition hover:bg-muted/40">
         {body}
@@ -261,26 +337,7 @@ function PenaltyIcon({ missed }) {
   return <FootballIcon size={14} className="text-emerald-600" missed={missed} />;
 }
 
-function CardIcon({ color }) {
-  return (
-    <span
-      className="relative top-px block h-3 w-2 rounded-[2px]"
-      style={{ backgroundColor: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.3)" }}
-    />
-  );
-}
-
-function SubIcon({ color }) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8 14 L8 5 M8 5 L4.8 8.2 M8 5 L11.2 8.2" />
-      <path d="M16 10 L16 19 M16 19 L12.8 15.8 M16 19 L19.2 15.8" />
-    </svg>
-  );
-}
-
-function EventIcon({ event, match }) {
-  const color = teamColor(event.team, match);
+function EventIcon({ event }) {
   const left = (event.minute / AXIS_MINUTES) * 100;
   let icon = null;
   if (event.type === "goal") icon = <FootballIcon size={13} />;
@@ -289,7 +346,7 @@ function EventIcon({ event, match }) {
   else if (event.type === "penalty-missed") icon = <PenaltyIcon missed />;
   else if (event.type === "yellow") icon = <CardIcon color="#f3c847" />;
   else if (event.type === "red") icon = <CardIcon color="#e24b4a" />;
-  else if (event.type === "sub") icon = <SubIcon color={color} />;
+  else if (event.type === "sub") icon = <SubIcon size={13} />;
   const marker = (
     <span
       className="absolute top-0 -translate-x-1/2 transition hover:scale-125"
@@ -333,7 +390,7 @@ function MomentumChart({ match, events, values, clock }) {
           </span>
           <div className="absolute inset-x-0 bottom-0 h-3.5">
             {homeEvents.map((event) => (
-              <EventIcon key={event.id} event={event} match={match} />
+              <EventIcon key={event.id} event={event} />
             ))}
           </div>
         </div>
@@ -405,7 +462,7 @@ function MomentumChart({ match, events, values, clock }) {
         <div className="relative h-9">
           <div className="absolute inset-x-0 top-0 h-3.5">
             {awayEvents.map((event) => (
-              <EventIcon key={event.id} event={event} match={match} />
+              <EventIcon key={event.id} event={event} />
             ))}
           </div>
           <span className="absolute bottom-0 left-1 inline-flex items-center gap-1 rounded-full bg-card/85 px-1.5 py-0.5 desk-type-meta font-semibold">
@@ -452,11 +509,16 @@ function LineupPitch({ match, players }) {
               style={{ left: `${player.x}%`, top: `${player.y}%` }}
               title={player.name + " · " + player.position + ratingLabel + changeLabel}
             >
-              <span
-                className="grid size-5 place-items-center rounded-full border-2 text-[9px] font-bold text-white"
-                style={{ backgroundColor: teamColor(player.team, match), borderColor: "rgba(255,255,255,0.9)" }}
-              >
-                {player.number}
+              <span className="relative">
+                <span
+                  className="grid size-[23px] place-items-center rounded-full border-2 text-[10px] font-bold text-white"
+                  style={{ backgroundColor: teamColor(player.team, match), borderColor: "rgba(255,255,255,0.9)" }}
+                >
+                  {player.number}
+                </span>
+                {player.eventBadges?.map((badge) => (
+                  <LineupEventBadge key={badge.type} badge={badge} player={player} />
+                ))}
               </span>
               {hasRating ? (
                 <span
@@ -487,6 +549,26 @@ function LineupPitch({ match, players }) {
   );
 }
 
+function ControversialOnlySwitch({ checked, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-label="Controversial only"
+      aria-checked={checked}
+      title={disabled ? "Switch to Decisions to filter controversial calls" : undefined}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className="inline-flex shrink-0 items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <span className={cn("relative inline-flex h-3.5 w-6 items-center rounded-full transition-colors", checked ? "bg-destructive" : "bg-muted-foreground/40")}>
+        <span className={cn("absolute size-2.5 rounded-full bg-background shadow-sm transition-transform", checked ? "translate-x-3" : "translate-x-0.5")} />
+      </span>
+      <span className="desk-type-meta whitespace-nowrap font-medium">Controversial only</span>
+    </button>
+  );
+}
+
 function TabSwitch({ value, onChange, options }) {
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/50 p-0.5">
@@ -512,6 +594,7 @@ function TabSwitch({ value, onChange, options }) {
 
 export default function OverviewTab() {
   const [timeline, setTimeline] = useState("decisions");
+  const [controversialOnly, setControversialOnly] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const [clock, setClock] = useState(null);
   const [connection, setConnection] = useState("connecting");
@@ -591,13 +674,26 @@ export default function OverviewTab() {
   const decisions = sortDecisions(withinClock(matchData.decisions || [], clock));
   const phases = withinClock(matchData.phases || [], clock);
   const controversialDecisionIds = new Set();
+  const questionableDecisionIds = new Set(
+    decisions.filter((decision) => decision.type === "questionable").map((decision) => decision.id),
+  );
   const reviewedIncidentIds = new Set();
   for (const decision of decisions) {
     const incident = decision.incidentId ? getIncident(decision.incidentId) : null;
     if (incident?.status !== "active" || reviewedIncidentIds.has(incident.id)) continue;
     reviewedIncidentIds.add(incident.id);
     controversialDecisionIds.add(decision.id);
+    questionableDecisionIds.delete(decision.id);
   }
+  const decisionAssessment = (decision) =>
+    controversialDecisionIds.has(decision.id)
+      ? "controversial"
+      : questionableDecisionIds.has(decision.id)
+        ? "questionable"
+        : "correct";
+  const filteredDecisions = controversialOnly
+    ? decisions.filter((decision) => decisionAssessment(decision) === "controversial")
+    : decisions;
   const statRows = matchData.stats || [];
   const momentum = matchData.momentum || [];
   const lineupPlayers = buildLineup(matchData.people || [], currentFrame);
@@ -610,16 +706,18 @@ export default function OverviewTab() {
     if (rating.timeSeconds > lineupSecond || !lineupIds.has(rating.playerId) || latestRatings.has(rating.playerId)) continue;
     latestRatings.set(rating.playerId, rating);
   }
+  const lineupBadgesByPlayerId = buildLineupEventBadges(events, clock?.seconds);
   const ratedLineupPlayers = lineupPlayers.map((player) => {
     const rating = latestRatings.get(player.personId);
     return {
       ...player,
       rating: rating?.rating ?? null,
       ratingDelta: rating?.ratingDelta ?? 0,
+      eventBadges: lineupBadgesByPlayerId.get(player.personId) || [],
     };
   });
   const decisionCounts = decisions.reduce((counts, decision) => {
-    counts[controversialDecisionIds.has(decision.id) ? "controversial" : "correct"] += 1;
+    counts[decisionAssessment(decision)] += 1;
     return counts;
   }, { correct: 0, questionable: 0, controversial: 0 });
 
@@ -658,28 +756,37 @@ export default function OverviewTab() {
       <div className={cn("grid min-h-0 flex-1 items-stretch gap-3", DESK_GRID)}>
         <Card className="flex h-full flex-col overflow-hidden">
           <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 py-2">
-            <CardTitle className="text-sm">Timeline</CardTitle>
+            <CardTitle className="shrink-0 text-sm">Timeline</CardTitle>
+            <ControversialOnlySwitch
+              checked={controversialOnly}
+              onChange={setControversialOnly}
+              disabled={timeline !== "decisions"}
+            />
             <TabSwitch value={timeline} onChange={setTimeline} options={TIMELINE_TABS} />
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col py-2">
             {timeline === "decisions" ? (
-              <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-                <div className="absolute bottom-4 left-[18px] top-4 w-px bg-border" />
-                {decisions.map((decision) => (
-                  <DecisionRow
-                    key={decision.id}
-                    decision={decision}
-                    controversial={controversialDecisionIds.has(decision.id)}
-                  />
-                ))}
-                {!decisions.length ? (
-                  <p className="px-1 desk-type-meta text-muted-foreground">
-                    {apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
-                  </p>
-                ) : null}
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                <div className="flex flex-col gap-3">
+                  {filteredDecisions.map((decision, index) => (
+                    <DecisionRow
+                      key={decision.id}
+                      decision={decision}
+                      assessment={decisionAssessment(decision)}
+                      hasNext={index < filteredDecisions.length - 1}
+                    />
+                  ))}
+                  {!filteredDecisions.length ? (
+                    <p className="px-1 desk-type-meta text-muted-foreground">
+                      {controversialOnly
+                        ? "No controversial decisions recorded."
+                        : apiError || (snapshot ? "No decision events recorded." : "Connecting to match API…")}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             ) : (
-              <EventTimeline events={timelineEvents} phases={phases} match={match} />
+              <EventTimeline events={timelineEvents} phases={phases} />
             )}
             <div className="shrink-0 border-t pt-2">
               {timeline === "decisions" ? (
@@ -715,28 +822,23 @@ export default function OverviewTab() {
         <Card className="flex h-full flex-col overflow-hidden">
           <CardHeader className="flex-row items-center justify-between space-y-0 py-2">
             <div>
-              <CardTitle className="text-sm">Match stats</CardTitle>
+              <CardTitle className="text-sm">Match Details</CardTitle>
               <p className="mt-0.5 desk-type-meta text-muted-foreground">Stats and momentum update with the live clock.</p>
-            </div>
-            <div className="flex items-center gap-2.5 desk-type-meta text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <span className="size-2 rounded-full" style={{ backgroundColor: match.home.color }} />
-                {match.home.code} pushing
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="size-2 rounded-full" style={{ backgroundColor: match.away.color }} />
-                {match.away.code} pushing
-              </span>
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3">
             <MomentumChart match={match} events={timelineEvents} values={momentum} clock={clock} />
 
             <div className="grid min-h-0 flex-1 items-start gap-4 border-t pt-3 lg:grid-cols-[1fr_250px]">
-              <div className="flex min-h-0 flex-col justify-between">
-                {statRows.map((row) => (
-                  <StatBarRow key={row.label} row={row} match={match} />
-                ))}
+              <div className="flex min-h-0 flex-col">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium">Stats</span>
+                </div>
+                <div className="mt-1.5 flex min-h-0 flex-1 flex-col justify-between">
+                  {statRows.map((row) => (
+                    <StatBarRow key={row.label} row={row} match={match} />
+                  ))}
+                </div>
               </div>
               <LineupPitch match={match} players={ratedLineupPlayers} />
             </div>
