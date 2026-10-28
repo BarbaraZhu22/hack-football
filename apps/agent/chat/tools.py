@@ -28,7 +28,7 @@ def show_analysis(incident_type: str, ruling: str, summary: str, reviews: str = 
 
 @tool
 def get_incident_capture() -> str:
-    """Return the current-frame offside assessment or contact metrics, video metadata, and viewport state for the pitch incident."""
+    """Return pitch metrics and, for offside, every 120 Hz frame plus the authoritative measured 3D pass-release assessment."""
     return pitch_snapshot_json()
 
 

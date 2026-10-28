@@ -239,16 +239,19 @@ function timecode(time) {
 
 function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation, time, timeRef, onTimeChange }) {
   const [displayTime, setDisplayTime] = useState(time);
+  const onTimeChangeRef = useRef(onTimeChange);
+  onTimeChangeRef.current = onTimeChange;
   const activeEvent = simulation.events.reduce(
     (current, event) => (event.t <= displayTime ? event : current),
     simulation.events[0],
   );
 
   useEffect(() => {
-    if (!playing) {
-      setDisplayTime(time);
-      return undefined;
-    }
+    if (!playing) setDisplayTime(time);
+  }, [playing, time]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
 
     let request = 0;
     let lastUpdate = 0;
@@ -256,14 +259,14 @@ function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation
       if (now - lastUpdate >= 1000 / 30) {
         const currentTime = timeRef.current;
         setDisplayTime(currentTime);
-        onTimeChange?.(currentTime);
+        onTimeChangeRef.current?.(currentTime);
         lastUpdate = now;
       }
       request = requestAnimationFrame(update);
     };
     request = requestAnimationFrame(update);
     return () => cancelAnimationFrame(request);
-  }, [onTimeChange, playing, time, timeRef]);
+  }, [playing, timeRef]);
 
   function togglePlayback() {
     if (!playing && timeRef.current >= simulation.duration) seek(0);
@@ -317,16 +320,20 @@ function PlaybackControls({ playing, rate, setRate, setPlaying, seek, simulation
 
 export default function PitchTab() {
   const { state, run } = useScene();
-  const { setReview } = useIncidentReview();
+  const { setReview, clearAdjudicatorResult } = useIncidentReview();
+  const searchParams = useSearchParams();
+  const requestedIncidentId = searchParams.get("incident");
+  const initialIncidentId = INCIDENTS.some((item) => item.id === requestedIncidentId)
+    ? requestedIncidentId
+    : ACTIVE_INCIDENT_ID;
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(0.5);
-  const [incidentId, setIncidentId] = useState(ACTIVE_INCIDENT_ID);
+  const [incidentId, setIncidentId] = useState(initialIncidentId);
   const [offsideTime, setOffsideTime] = useState(0);
   const [canWarmAssets, setCanWarmAssets] = useState(false);
   const [assetState, setAssetState] = useState({ incidentId: null, status: "idle", attempt: 0, error: null });
   const assetAttemptsRef = useRef(new Map());
   const previousIncidentIdRef = useRef(incidentId);
-  const searchParams = useSearchParams();
   const incident = INCIDENTS.find((item) => item.id === incidentId) ?? INCIDENTS[0];
   const incidentActive = incident.status === "active";
   const isOffside = incidentId === "offside";
@@ -338,6 +345,19 @@ export default function PitchTab() {
     () => isOffside ? buildOffsideSimulation() : buildSimulation(),
     [isOffside],
   );
+  const handlePassReleaseSample = useCallback((sample) => {
+    setReview((current) => {
+      if (current?.incident?.id !== "offside") return current;
+      return {
+        ...current,
+        assessment: sample.assessment,
+        offsideTimeline: sample.offsideTimeline,
+        passReleaseFrame: sample.passReleaseFrame,
+        passReleaseMeasurementReady: true,
+      };
+    });
+  }, [setReview]);
+  if (isOffside) simulation.onPassReleaseSample = handlePassReleaseSample;
   const time = isOffside ? offsideTime : state.incident.time;
   const contactTime = isOffside ? simulation.contactT : state.incident.contactTime;
   const timeRef = useRef(time);
@@ -348,11 +368,21 @@ export default function PitchTab() {
     (current, event) => (event.t <= time ? event : current),
     simulation.events[0],
   );
+  const adjudicationEvent = isOffside
+    ? simulation.events.find((event) => event.id === "release")
+    : activeEvent;
+
+  useEffect(() => {
+    if (isOffside) clearAdjudicatorResult(incident.incidentId);
+  }, [clearAdjudicatorResult, incident.incidentId, isOffside]);
 
   useEffect(() => {
     if (playing) return;
-    const event = incidentActive ? activeEvent : null;
-    const assessment = incidentActive && isOffside ? simulation.offside : null;
+    const event = incidentActive ? adjudicationEvent : null;
+    const passReleaseMeasurementReady = incidentActive && isOffside && simulation.passReleasePoseReady;
+    const assessment = passReleaseMeasurementReady ? simulation.passReleaseAssessment : null;
+    const offsideTimeline = incidentActive && isOffside ? simulation.offsideTimeline : null;
+    const passReleaseFrame = passReleaseMeasurementReady ? simulation.passReleaseFrame : null;
     setReview((current) => {
       const sameEvent = (current?.event?.id ?? null) === (event?.id ?? null);
       const sameEvents = incidentActive
@@ -362,6 +392,9 @@ export default function PitchTab() {
         current?.incident?.id === incident.id
         && sameEvent
         && current?.assessment === assessment
+        && current?.offsideTimeline === offsideTimeline
+        && current?.passReleaseFrame === passReleaseFrame
+        && current?.passReleaseMeasurementReady === passReleaseMeasurementReady
         && sameEvents
       ) {
         return current;
@@ -371,9 +404,12 @@ export default function PitchTab() {
         event,
         events: incidentActive ? simulation.events : [],
         assessment,
+        offsideTimeline,
+        passReleaseFrame,
+        passReleaseMeasurementReady,
       };
     });
-  }, [activeEvent, incident, incidentActive, isOffside, playing, setReview, simulation.events, simulation.offside]);
+  }, [adjudicationEvent, incident, incidentActive, isOffside, playing, setReview, simulation.events, simulation.offsideTimeline, simulation.passReleaseAssessment, simulation.passReleaseFrame]);
 
   if (!playing && !wasPlayingRef.current) timeRef.current = time;
 

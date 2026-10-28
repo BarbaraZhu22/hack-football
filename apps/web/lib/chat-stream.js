@@ -17,6 +17,8 @@ function parseSseBlock(block) {
   }
 }
 
+const adjudicationsByPayload = new Map();
+
 async function readSseStream(response, onEvent) {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -65,19 +67,38 @@ async function readSseStream(response, onEvent) {
   return donePayload;
 }
 
-export async function streamAdjudication(payload, onEvent) {
-  const response = await fetch("/api/adjudicate/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Adjudication failed (${response.status})`);
+export function streamAdjudication(payload, onEvent) {
+  const key = JSON.stringify(payload);
+  const existing = adjudicationsByPayload.get(key);
+  if (existing) {
+    if (onEvent && !existing.settled) existing.listeners.add(onEvent);
+    return existing.promise;
   }
 
-  return readSseStream(response, onEvent ?? (() => {}));
+  const entry = { listeners: new Set(), promise: null, settled: false };
+  if (onEvent) entry.listeners.add(onEvent);
+  const notify = (event, data) => {
+    for (const listener of entry.listeners) listener(event, data);
+  };
+  entry.promise = (async () => {
+    const response = await fetch("/api/adjudicate/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: key,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Adjudication failed (${response.status})`);
+    }
+
+    return readSseStream(response, notify);
+  })().finally(() => {
+    entry.settled = true;
+    entry.listeners.clear();
+  });
+  adjudicationsByPayload.set(key, entry);
+  return entry.promise;
 }
 
 export async function streamChatMessage({ messages, context, adjudicate = false }, onEvent) {

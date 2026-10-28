@@ -93,7 +93,9 @@ export function buildAdjudicationRequest(review) {
           timeSeconds: event.t,
           detail: event.detail,
         })),
-        assessment: review?.assessment ?? null,
+        offside: incident?.id === "offside" && review?.offsideTimeline
+          ? { reviewFrame: "pass_release", timeline: review.offsideTimeline }
+          : null,
       },
       recordedDecision: decision,
     },
