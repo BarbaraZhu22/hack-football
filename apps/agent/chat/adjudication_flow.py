@@ -33,12 +33,23 @@ ADJUDICATION_INSTRUCTIONS = (
     "Do not write user-visible text before show_analysis finishes. "
     "Do not restate full rule bodies or precedent facts. "
     "Never ask the user to paste commentary or incident details when minuteContext is already provided."
+    " For offside, the authoritative Law 11 position is the exact `pass_release` sample at "
+    "`offside.timeline.passReleaseTimeSeconds`, indexed by `offside.timeline.passReleaseFrameIndex`. "
+    "Only decide when `offside.timeline.measurementReady` is true and that sample's source is `three_d_pose`. "
+    "If it is false or the release source is only `simulation_proxy`, report that the measured release pose is not ready; "
+    "do not issue a provisional onside/offside ruling. Use the indexed sample's `assessment` as the sole positional evidence, and inspect the full "
+    "120 Hz `offside.timeline.samples` to understand movement immediately before and after that instant. "
+    "Never decide from the idle, first, paused, or otherwise current playback frame when it is not the pass-release frame. "
+    "If the release sample is missing, report that evidence is insufficient instead of substituting another frame. "
+    "For the geometric position check, a positive `receiverMargin` at pass release means the receiver is ahead of the "
+    "offside line; separately assess involvement in active play under Law 11.2."
 )
 
 DESK_INSTRUCTIONS = (
     "You are the Football Desk assistant for a football-themed workspace. "
     "Answer in clear, conversational English. Keep ordinary replies short. "
-    "On the pitch incident tab, use get_incident_capture for contact metrics, the current-frame offside assessment, and video feed details before guessing. "
+    "On the pitch incident tab, use get_incident_capture for contact metrics, the full offside frame timeline, the exact pass-release assessment, and video feed details before guessing. "
+    "For an offside ruling, wait for a measured three_d_pose pass-release frame and judge position there; the currently displayed playback frame is visualization context only. "
     "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene before you answer. "
     "Pick the button yourself and pass button only. Do not calculate times or camera coordinates. "
     "Do not ask the user to press a control, and do not offer a list of angles for them to choose. "
@@ -53,7 +64,8 @@ DESK_INSTRUCTIONS = (
 
 FOLLOWUP_INSTRUCTIONS = (
     "You are the Football Desk assistant. Answer follow-up questions in one or two sentences. "
-    "For questions about the offside position or margin, call get_incident_capture and use its current-playback-frame assessment. "
+    "For questions about offside, call get_incident_capture. For a Law 11 decision, require its measured three_d_pose pass-release assessment, then use that frame and the full timeline; do not use the idle/current playback frame as the ruling frame. "
+    "If the user asks about a different playback moment, answer from that timestamp's timeline sample and label it as a playback-frame measurement, not the pass-release ruling. "
     "Do not call show_analysis or request catalog lookups unless the user asks for a new ruling. "
     "When the user wants a camera, overlay, marker, speed, or playback change, call control_scene with one button. "
     "Pick the button yourself. Do not ask the user to press it or to choose an angle. "
@@ -146,7 +158,7 @@ def extract_adjudication_facts_from_body(body: dict[str, Any]) -> dict[str, Any]
         "recordedDecision": body.get("recordedDecision") or body.get("decision") or {},
         "eventFacts": body.get("eventFacts") or body.get("event") or {},
         "ruleCriteria": body.get("ruleCriteria") or [],
-        "offsideAssessment": body.get("offsideAssessment") or {},
+        "offside": body.get("offside") or {},
     }
 
 

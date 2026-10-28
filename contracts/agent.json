@@ -5,16 +5,16 @@
       "tab": "pitch|match|game|overview",
       "pitch": {
         "offside": {
-          "reviewFrame": "current_playback_frame",
-          "assessment": {
-            "ballZ": "number",
-            "receiverLeadingPointZ": "number",
-            "secondLastOpponentZ": "number",
-            "lineZ": "number",
-            "receiverMargin": "number",
-            "receiverAhead": "boolean",
+          "reviewFrame": "pass_release",
+          "timeline": {
+            "sampleRateHz": 120,
+            "frameCount": "number",
+            "durationSeconds": "number",
+            "passReleaseTimeSeconds": "number",
+            "passReleaseFrameIndex": "number",
+            "measurementReady": "boolean",
             "measurementSource": "simulation_proxy|three_d_pose",
-            "reviewTimeSeconds": "number"
+            "samples": "Every 120 Hz frame with positions and assessment; the indexed pass-release sample is the sole ruling evidence"
           }
         }
       }
@@ -24,6 +24,10 @@
     "message": { "role": "assistant", "content": "string" },
     "actions": [],
     "toolCalls": [{ "name": "string", "input": {} }]
+  },
+  "adjudicateRequest": {
+    "incidentId": "string",
+    "offside": "Same offside evidence envelope as chatRequest.context.pitch.offside"
   },
   "sceneActions": [
     { "type": "camera.set", "preset": "broadcast|touchline|tactical|referee|free", "position": [0, 0, 0], "lookAt": [0, 0, 0] },

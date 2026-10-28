@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale } from "lucide-react";
 
 import { AgentConversation } from "@/components/chat/AgentChat";
@@ -48,13 +48,13 @@ function getRuleCriteria(review) {
           : `${assessment.aheadOfBall ? "Ahead" : "Behind"} by ${distance(assessment.receiverLeadingPointZ - assessment.ballZ)}`,
       },
       {
-        id: "second-last-opponent",
-        label: "Receiver ahead of second-last opponent",
+        id: "offside-line",
+        label: "Receiver ahead of the offside line",
         law: "Law 11.1",
-        status: positionStatus(assessment.aheadOfSecondLastOpponent),
-        reading: assessment.aheadOfSecondLastOpponent == null
+        status: positionStatus(assessment.receiverAhead),
+        reading: assessment.receiverAhead == null
           ? "Position not available"
-          : `${assessment.aheadOfSecondLastOpponent ? "Ahead" : "Behind"} by ${distance(assessment.receiverLeadingPointZ - assessment.secondLastOpponentZ)}`,
+          : `${assessment.receiverAhead ? "Ahead" : "Behind"} by ${distance(assessment.receiverMargin)}`,
       },
       {
         id: "active-play",
@@ -88,7 +88,7 @@ function getDecisionComparison(review) {
     const assessment = review.assessment;
     if (assessment?.receiverAhead == null) {
       return {
-        analysis: { result: "PENDING", detail: "Pass-release position is not available." },
+        analysis: { result: "PENDING", detail: "Waiting for measured 3D positions at pass release." },
         referee: { result: "GOAL DISALLOWED", detail: "Recorded decision in the incident log." },
       };
     }
@@ -307,7 +307,7 @@ function buildIncidentAdjudicationPayload({
   criteria,
   decision,
   currentEvent,
-  offsideAssessment,
+  offsideTimeline,
 }) {
   return {
     incidentId,
@@ -316,12 +316,13 @@ function buildIncidentAdjudicationPayload({
     ruleCriteria: criteria.map(({ id, label, law, status, reading }) => ({ id, label, law, status, reading })),
     recordedDecision: { label: decision.title, detail: decision.detail },
     eventFacts: currentEvent ? { label: currentEvent.label, detail: currentEvent.detail } : {},
-    ...(offsideAssessment ? { offsideAssessment } : {}),
+    ...(offsideTimeline ? { offside: { reviewFrame: "pass_release", timeline: offsideTimeline } } : {}),
   };
 }
 
 export default function IncidentAgentPanel() {
   const { review, adjudicatorResults = {}, setAdjudicatorResult } = useIncidentReview();
+  const adjudicationRequestKeyRef = useRef(null);
   const [activeView, setActiveView] = useState("rules");
   const [workflowState, setWorkflowState] = useState({
     incidentId: null,
@@ -337,6 +338,16 @@ export default function IncidentAgentPanel() {
   const incidentId = review?.incident?.incidentId;
   const incidentTypes = useMemo(() => PRECEDENT_TYPES[review?.incident?.id] ?? [], [review?.incident?.id]);
   const submittedAdjudicatorResult = incidentId ? adjudicatorResults[incidentId] ?? null : null;
+  const waitingForPassReleaseMeasurement = review?.incident?.id === "offside"
+    && !review.passReleaseMeasurementReady;
+  const adjudicationRequestKey = review?.incident?.id === "offside"
+    ? JSON.stringify({
+        incidentId,
+        frameIndex: review.passReleaseFrame?.frameIndex,
+        measurementSource: review.assessment?.measurementSource,
+        receiverMargin: review.assessment?.receiverMargin,
+      })
+    : JSON.stringify({ incidentId, eventId: currentEvent?.id });
 
   const workflowActive = workflowState.incidentId === incidentId;
   const workflowPhase = workflowActive ? workflowState.phase : "idle";
@@ -358,6 +369,16 @@ export default function IncidentAgentPanel() {
         phase: "done",
         toolCalls: [],
         lists: { criteria: [], rules: [], precedents: [] },
+        error: null,
+      });
+      return undefined;
+    }
+    if (waitingForPassReleaseMeasurement) {
+      setWorkflowState({
+        incidentId,
+        phase: "measuring",
+        toolCalls: [],
+        lists: null,
         error: null,
       });
       return undefined;
@@ -389,64 +410,69 @@ export default function IncidentAgentPanel() {
       criteria,
       decision,
       currentEvent,
-      offsideAssessment: review?.incident?.id === "offside" ? review.assessment : null,
+      offsideTimeline: review?.incident?.id === "offside" ? review.offsideTimeline : null,
     });
 
-    streamAdjudication(payload, (event, data) => {
-      if (cancelled) return;
-      if (event === "tool") {
-        setWorkflowState((current) => {
-          if (current.incidentId !== incidentId) return current;
-          const exists = current.toolCalls.some(
-            (call) => call.name === data.name && JSON.stringify(call.input) === JSON.stringify(data.input),
-          );
-          return {
-            ...current,
-            toolCalls: exists ? current.toolCalls : [...current.toolCalls, data],
-          };
-        });
-      }
-      if (event === "catalog") {
-        setWorkflowState((current) => {
-          if (current.incidentId !== incidentId) return current;
-          return {
-            ...current,
-            phase: "adjudicating",
-            lists: data.lists ?? null,
-            toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls : current.toolCalls,
-          };
-        });
-      }
-    })
-      .then((result) => {
+    const requestTimer = window.setTimeout(() => {
+      if (adjudicationRequestKeyRef.current === adjudicationRequestKey) return;
+      adjudicationRequestKeyRef.current = adjudicationRequestKey;
+      streamAdjudication(payload, (event, data) => {
         if (cancelled) return;
-        setAdjudicatorResult({
-          incidentId,
-          analysis: result.analysis,
-          toolCalls: result.toolCalls ?? [],
-          ruleEvaluations: result.ruleEvaluations ?? result.analysis?.ruleEvaluations ?? {},
-          precedentComparisons: result.precedentComparisons ?? result.analysis?.precedentComparisons ?? {},
-        });
-        setWorkflowState((current) => ({
-          ...current,
-          incidentId,
-          phase: "done",
-          lists: current.lists ?? result.analysis?.lists ?? null,
-          error: null,
-        }));
+        if (event === "tool") {
+          setWorkflowState((current) => {
+            if (current.incidentId !== incidentId) return current;
+            const exists = current.toolCalls.some(
+              (call) => call.name === data.name && JSON.stringify(call.input) === JSON.stringify(data.input),
+            );
+            return {
+              ...current,
+              toolCalls: exists ? current.toolCalls : [...current.toolCalls, data],
+            };
+          });
+        }
+        if (event === "catalog") {
+          setWorkflowState((current) => {
+            if (current.incidentId !== incidentId) return current;
+            return {
+              ...current,
+              phase: "adjudicating",
+              lists: data.lists ?? null,
+              toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls : current.toolCalls,
+            };
+          });
+        }
       })
-      .catch((error) => {
-        if (cancelled) return;
-        setWorkflowState((current) => ({
-          ...current,
-          incidentId,
-          phase: "error",
-          error: error instanceof Error ? error.message : "Adjudication is unavailable.",
-        }));
-      });
+        .then((result) => {
+          if (cancelled) return;
+          setAdjudicatorResult({
+            incidentId,
+            analysis: result.analysis,
+            toolCalls: result.toolCalls ?? [],
+            ruleEvaluations: result.ruleEvaluations ?? result.analysis?.ruleEvaluations ?? {},
+            precedentComparisons: result.precedentComparisons ?? result.analysis?.precedentComparisons ?? {},
+          });
+          setWorkflowState((current) => ({
+            ...current,
+            incidentId,
+            phase: "done",
+            lists: current.lists ?? result.analysis?.lists ?? null,
+            error: null,
+          }));
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setWorkflowState((current) => ({
+            ...current,
+            incidentId,
+            phase: "error",
+            error: error instanceof Error ? error.message : "Adjudication is unavailable.",
+          }));
+        });
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(requestTimer);
     };
   }, [
     incidentId,
@@ -457,10 +483,14 @@ export default function IncidentAgentPanel() {
     decision.title,
     decision.detail,
     currentEvent,
+    review?.offsideTimeline,
+    review?.passReleaseMeasurementReady,
+    waitingForPassReleaseMeasurement,
+    adjudicationRequestKey,
     setAdjudicatorResult,
   ]);
 
-  const catalogLoading = workflowPhase === "loading" && !catalogLists;
+  const catalogLoading = waitingForPassReleaseMeasurement || (workflowPhase === "loading" && !catalogLists);
   const catalogToolsRunning = workflowPhase === "loading" && !catalogLists;
   const adjudicationLoading = workflowPhase === "adjudicating";
   const workflowError = workflowPhase === "error" ? workflowState.error : null;
@@ -563,7 +593,7 @@ export default function IncidentAgentPanel() {
                     </h2>
                     <Badge variant="outline" className="desk-type-meta">
                       {catalogLoading
-                        ? "Catalog…"
+                        ? waitingForPassReleaseMeasurement ? "Measuring…" : "Catalog…"
                         : !showCatalogLists
                           ? "Pending"
                           : adjudicationLoading
@@ -579,10 +609,16 @@ export default function IncidentAgentPanel() {
                     </p>
                   ) : null}
                   {!showCatalogLists ? (
-                    <CatalogToolProgress
-                      toolCalls={catalogToolCalls}
-                      waitingForTools={catalogToolsRunning}
-                    />
+                    waitingForPassReleaseMeasurement ? (
+                      <p className="rounded-md border p-2 desk-type-meta text-muted-foreground">
+                        Measuring the 3D player and ball positions at the pass-release frame before adjudication.
+                      </p>
+                    ) : (
+                      <CatalogToolProgress
+                        toolCalls={catalogToolCalls}
+                        waitingForTools={catalogToolsRunning}
+                      />
+                    )
                   ) : showCatalogLists && displayCriteria.length ? (
                     <div className="divide-y rounded-md border px-2">
                       {displayCriteria.map((criterion) => (

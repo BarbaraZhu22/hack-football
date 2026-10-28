@@ -14,6 +14,7 @@ const PASS_START = 0.5;
 const BALL_RELEASE_LOCAL_TIME = 0.5;
 const RELEASE_TIME = PASS_START + BALL_RELEASE_LOCAL_TIME;
 const DURATION = RELEASE_TIME;
+const roundMeters = (value) => Number(value.toFixed(4));
 
 function makeFrame(t) {
   const actorTime = Math.min(t, RELEASE_TIME);
@@ -88,13 +89,72 @@ export function buildOffsideSimulation() {
     reviewTimeSeconds: 0,
   });
 
+  const offsideTimeline = frames.map((frame, frameIndex) => {
+    const ballZ = frame.ball.p.z;
+    const receiverLeadingZ = frame.receiver.z + 0.24;
+    const secondLastOpponentZ = frame.defender.z + 0.28;
+    const frameAssessment = calculateOffsideAssessment({
+      ballZ,
+      receiverLeadingPointZ: receiverLeadingZ,
+      secondLastOpponentZ,
+      measurementSource: "simulation_proxy",
+      reviewTimeSeconds: frame.t,
+    });
+    return {
+      frameIndex,
+      timeSeconds: roundMeters(frame.t),
+      phase: frame.t === RELEASE_TIME ? "pass_release" : frame.t < RELEASE_TIME ? "pre_release" : "post_release",
+      ballPositionM: {
+        x: roundMeters(frame.ball.p.x),
+        y: roundMeters(frame.ball.p.y),
+        z: roundMeters(frame.ball.p.z),
+      },
+      receiverPositionM: {
+        x: roundMeters(frame.receiver.x),
+        z: roundMeters(frame.receiver.z),
+        leadingPointZ: roundMeters(receiverLeadingZ),
+      },
+      secondLastOpponent: {
+        id: secondLastOpponent.role,
+        x: roundMeters(frame.defender.x),
+        z: roundMeters(frame.defender.z),
+        leadingPointZ: roundMeters(secondLastOpponentZ),
+      },
+      assessment: {
+        ...frameAssessment,
+        lineZ: roundMeters(frameAssessment.lineZ),
+        ballZ: roundMeters(frameAssessment.ballZ),
+        receiverLeadingPointZ: roundMeters(frameAssessment.receiverLeadingPointZ),
+        secondLastOpponentZ: roundMeters(frameAssessment.secondLastOpponentZ),
+        receiverMargin: roundMeters(frameAssessment.receiverMargin),
+      },
+    };
+  });
+  const passReleaseFrame = offsideTimeline.find((frame) => frame.phase === "pass_release");
+  const offsideTimelineData = {
+    sampleRateHz: 1 / DT,
+    frameCount: offsideTimeline.length,
+    durationSeconds: DURATION,
+    passReleaseTimeSeconds: RELEASE_TIME,
+    passReleaseFrameIndex: passReleaseFrame.frameIndex,
+    measurementReady: false,
+    measurementSource: "simulation_proxy",
+    samples: offsideTimeline,
+  };
+
   return {
     kind: "offside",
     frames,
     duration: DURATION,
     contactT: RELEASE_TIME,
+    passReleaseTimeSeconds: RELEASE_TIME,
     passStartT: PASS_START,
     passLocalReleaseT: BALL_RELEASE_LOCAL_TIME,
+    passReleaseFrame,
+    passReleaseAssessment: passReleaseFrame.assessment,
+    offsideTimeline: offsideTimelineData,
+    passReleasePoseReady: false,
+    passReleasePoseMeasurements: { ball: null, receiver: null, defender: null },
     offside: {
       ...assessment,
       secondLastOpponent: secondLastOpponent.role,

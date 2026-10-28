@@ -21,7 +21,8 @@ export function usePitchChatContext() {
     const incidentId = params.get("incident") || "tackle";
     const sim = incidentId === "offside" ? buildOffsideSimulation() : buildSimulation();
     const offside = sim.kind === "offside";
-    const assessment = review?.incident?.id === incidentId ? review.assessment : sim.offside;
+    const matchesReview = review?.incident?.id === incidentId;
+    const offsideTimeline = matchesReview ? review.offsideTimeline ?? sim.offsideTimeline : sim.offsideTimeline;
 
     return {
       incidentId,
@@ -38,8 +39,8 @@ export function usePitchChatContext() {
           },
       offside: offside
         ? {
-            reviewFrame: "current_playback_frame",
-            assessment,
+            reviewFrame: "pass_release",
+            timeline: offsideTimeline,
           }
         : null,
       video: {
@@ -67,6 +68,6 @@ export function usePitchChatContext() {
     state.incident?.duration,
     state.overlays,
     review?.incident?.id,
-    review?.assessment,
+    review?.offsideTimeline,
   ]);
 }

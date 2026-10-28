@@ -14,6 +14,7 @@ import { getBodyModelUrl, getClipUrl } from "./actions/catalog";
 import { createRunPlayer, retargetRun, setRunTime } from "./actions/retarget";
 import { sampleOffsideFrame } from "@/lib/offside-simulation";
 import {
+  calculateOffsideAssessment,
   OFFSIDE_ELIGIBLE_BODY_PARTS,
   measureLeadingBodyPointZ,
 } from "@/lib/offside-assessment";
@@ -30,6 +31,23 @@ function carryBallPosition(sim, time, target = new THREE.Vector3(), frameBuffer)
   const frame = sampleOffsideFrame(sim, clamp(time, 0, sim.contactT), frameBuffer);
   const lead = 0.25 + 0.14 * smooth(clamp(time / sim.contactT, 0, 1));
   return target.set(frame.passer.x - 0.2, 0.12, frame.passer.z + lead);
+}
+
+function updatePasserBallPositionAtTime(sim, poseTime, actorGroup, rig, scratch, frameBuffer) {
+  const { toe, forward, kickBall, dribbleBall, ballPosition } = scratch;
+  (rig.bones.toeR ?? rig.bones.footR)?.getWorldPosition(toe);
+  forward.set(0, 0, 1).applyQuaternion(actorGroup.quaternion);
+  kickBall.copy(toe).addScaledVector(forward, 0.11);
+  kickBall.y = Math.max(0.115, kickBall.y + 0.035);
+  carryBallPosition(sim, poseTime, dribbleBall, frameBuffer);
+  const contactProgress = clamp((poseTime - (sim.contactT - 0.16)) / 0.16, 0, 1);
+  const kickBlend = 1 - (1 - contactProgress) ** 3;
+  const forwardAlignment = ballPosition.copy(kickBall).sub(dribbleBall).dot(forward);
+  const contactLead = clamp(forwardAlignment, 0, 0.38) * KICK_CONTACT_SPEED_MULTIPLIER;
+  ballPosition.copy(dribbleBall).addScaledVector(forward, contactLead * kickBlend);
+  const contactLift = clamp(kickBall.y - dribbleBall.y, 0.16, 0.3) * KICK_CONTACT_SPEED_MULTIPLIER;
+  ballPosition.y += contactLift * kickBlend;
+  return scratch;
 }
 
 function applyPoseAtTime({ sim, time, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer, sampledFrame }) {
@@ -94,6 +112,130 @@ function sampleToeAtTime(time, { sim, actorGroup, rig, runPlayer, passPlayer, ro
   }
   actorGroup.updateMatrixWorld(true);
   return toe;
+}
+
+function sampleReleasePoseMeasurement({ sim, timeRef, role, actorGroup, rig, runPlayer, passPlayer, poseBuffer, lineBones, linePoints }) {
+  const releaseTime = sim.passReleaseTimeSeconds ?? sim.contactT;
+  const currentTime = clamp(Number(timeRef.current) || 0, 0, sim.contactT);
+  const sampledFrame = sampleOffsideFrame(sim, releaseTime);
+  let measurement = null;
+
+  try {
+    applyPoseAtTime({
+      sim,
+      time: releaseTime,
+      role,
+      actorGroup,
+      rig,
+      runPlayer,
+      passPlayer,
+      poseBuffer,
+      sampledFrame,
+    });
+
+    if (role === "receiver" || role === "defender") {
+      const forward = actorGroup.getWorldDirection(new THREE.Vector3());
+      const leadingPointZ = measureLeadingBodyPointZ(lineBones, linePoints, forward.z);
+      if (Number.isFinite(leadingPointZ)) measurement = { leadingPointZ };
+    } else if (role === "passer") {
+      const scratch = {
+        toe: new THREE.Vector3(),
+        forward: new THREE.Vector3(),
+        kickBall: new THREE.Vector3(),
+        dribbleBall: new THREE.Vector3(),
+        ballPosition: new THREE.Vector3(),
+      };
+      updatePasserBallPositionAtTime(sim, releaseTime, actorGroup, rig, scratch, {});
+      measurement = {
+        ballPositionM: {
+          x: scratch.ballPosition.x,
+          y: scratch.ballPosition.y,
+          z: scratch.ballPosition.z,
+        },
+      };
+    }
+  } finally {
+    applyPoseAtTime({
+      sim,
+      time: currentTime,
+      role,
+      actorGroup,
+      rig,
+      runPlayer,
+      passPlayer,
+      poseBuffer,
+      sampledFrame: sampleOffsideFrame(sim, currentTime),
+    });
+  }
+
+  return measurement;
+}
+
+function recordReleasePoseMeasurement(sim, role, measurement) {
+  if (!measurement || sim.passReleasePoseReady || !sim.passReleasePoseMeasurements) return;
+  const measured = sim.passReleasePoseMeasurements;
+  if (role === "passer") measured.ball = measurement.ballPositionM;
+  if (role === "receiver") measured.receiverLeadingPointZ = measurement.leadingPointZ;
+  if (role === "defender") measured.secondLastOpponentLeadingPointZ = measurement.leadingPointZ;
+
+  const ball = measured.ball;
+  const receiverLeadingPointZ = measured.receiverLeadingPointZ;
+  const secondLastOpponentZ = measured.secondLastOpponentLeadingPointZ;
+  if (
+    !ball
+    || !Number.isFinite(ball.z)
+    || !Number.isFinite(receiverLeadingPointZ)
+    || !Number.isFinite(secondLastOpponentZ)
+  ) return;
+
+  const roundMeters = (value) => Number(value.toFixed(4));
+  const assessment = calculateOffsideAssessment({
+    ballZ: ball.z,
+    receiverLeadingPointZ,
+    secondLastOpponentZ,
+    measurementSource: "three_d_pose",
+    reviewTimeSeconds: sim.passReleaseTimeSeconds ?? sim.contactT,
+  });
+  const passReleaseFrame = {
+    ...sim.passReleaseFrame,
+    ballPositionM: {
+      x: roundMeters(ball.x),
+      y: roundMeters(ball.y),
+      z: roundMeters(ball.z),
+    },
+    receiverPositionM: {
+      ...sim.passReleaseFrame.receiverPositionM,
+      leadingPointZ: roundMeters(receiverLeadingPointZ),
+    },
+    secondLastOpponent: {
+      ...sim.passReleaseFrame.secondLastOpponent,
+      leadingPointZ: roundMeters(secondLastOpponentZ),
+    },
+    assessment: {
+      ...assessment,
+      lineZ: roundMeters(assessment.lineZ),
+      ballZ: roundMeters(assessment.ballZ),
+      receiverLeadingPointZ: roundMeters(assessment.receiverLeadingPointZ),
+      secondLastOpponentZ: roundMeters(assessment.secondLastOpponentZ),
+      receiverMargin: roundMeters(assessment.receiverMargin),
+    },
+  };
+  const samples = sim.offsideTimeline.samples.slice();
+  samples[passReleaseFrame.frameIndex] = passReleaseFrame;
+  sim.passReleaseFrame = passReleaseFrame;
+  sim.passReleaseAssessment = passReleaseFrame.assessment;
+  sim.offsideTimeline = {
+    ...sim.offsideTimeline,
+    measurementReady: true,
+    measurementSource: "three_d_pose",
+    samples,
+  };
+  sim.passReleasePoseReady = true;
+  sim.onPassReleaseSample?.({
+    assessment: sim.passReleaseAssessment,
+    passReleaseFrame,
+    offsideTimeline: sim.offsideTimeline,
+  });
 }
 
 function makeLabel(side, role) {
@@ -213,6 +355,19 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
         .filter(Boolean);
       linePointsRef.current = lineBonesRef.current.map(() => new THREE.Vector3());
     }
+    const releaseMeasurement = sampleReleasePoseMeasurement({
+      sim,
+      timeRef,
+      role,
+      actorGroup: group.current,
+      rig,
+      runPlayer,
+      passPlayer,
+      poseBuffer: poseBufferRef.current,
+      lineBones: lineBonesRef.current,
+      linePoints: linePointsRef.current,
+    });
+    recordReleasePoseMeasurement(sim, role, releaseMeasurement);
     const skeleton = buildSkeletonOverlay();
     skeleton.group.visible = false;
     skeleton.group.layers.mask = group.current.layers.mask;
@@ -223,7 +378,7 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
       scene.remove(skeleton.group);
       if (group.current) group.current.remove(floatingLabel);
     };
-  }, [floatingLabel, prepared, role, scene]);
+  }, [floatingLabel, passPlayer, prepared, role, runPlayer, scene, sim, timeRef]);
 
   useEffect(() => {
     if (skeletonRef.current) skeletonRef.current.group.visible = showSkeleton;
@@ -261,22 +416,14 @@ export function OffsideActor({ sim, timeRef, role, side, showSkeleton, showLabel
 
     if (role === "passer" && ballStateRef?.current) {
       const state = ballStateRef.current;
-      const { toe, forward, kickBall, dribbleBall, ballPosition } = ballScratchRef.current;
-      (rig.bones.toeR ?? rig.bones.footR)?.getWorldPosition(toe);
-      forward.set(0, 0, 1).applyQuaternion(actorGroup.quaternion);
-      kickBall.copy(toe).addScaledVector(forward, 0.11);
-      kickBall.y = Math.max(0.115, kickBall.y + 0.035);
-      carryBallPosition(sim, poseTime, dribbleBall, ballFrameRef.current);
-      const contactTravelDuration = 0.16;
-      const contactProgress = clamp((poseTime - (sim.contactT - contactTravelDuration)) / contactTravelDuration, 0, 1);
-      const kickBlend = 1 - (1 - contactProgress) ** 3;
-      const forwardAlignment = ballPosition.copy(kickBall).sub(dribbleBall).dot(forward);
-      // Keep the carry moving forward through contact, then let the foot guide the
-      // ball a short distance forward and upward before the release frame freezes.
-      const contactLead = clamp(forwardAlignment, 0, 0.38) * KICK_CONTACT_SPEED_MULTIPLIER;
-      ballPosition.copy(dribbleBall).addScaledVector(forward, contactLead * kickBlend);
-      const contactLift = clamp(kickBall.y - dribbleBall.y, 0.16, 0.3) * KICK_CONTACT_SPEED_MULTIPLIER;
-      ballPosition.y += contactLift * kickBlend;
+      const { toe, forward, kickBall, ballPosition } = updatePasserBallPositionAtTime(
+        sim,
+        poseTime,
+        actorGroup,
+        rig,
+        ballScratchRef.current,
+        ballFrameRef.current,
+      );
       const previousTime = state.previousTime;
       if (previousTime !== null && poseTime > previousTime + 1e-5 && poseTime - previousTime < 0.08) {
         state.velocity.copy(ballPosition).sub(state.previousPosition).divideScalar(poseTime - previousTime);
